@@ -61,7 +61,10 @@
   .group {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;          /* let buttons wrap inside the group / 组内按钮可换行 */
     gap: 4px;
+    row-gap: 6px;
+    min-width: 0;
     padding: 0 8px;
     border-right: 1px solid var(--border);
   }
@@ -339,7 +342,7 @@
       <button class="tool" id="zOut" title="缩小 Zoom out">−</button>
       <input type="text" id="zVal" title="缩放百分比 / Zoom %"><span class="pct">%</span>
       <button class="tool" id="zIn" title="放大 Zoom in">＋</button>
-      <button class="tool" id="zFit" title="适应窗口 / Fit to window">适应 Fit</button>
+      <button class="tool" id="zFit" title="适应窗口 / Fit to window">Fit</button>
     </div>
   </div>
 
@@ -495,8 +498,30 @@ function render() {
   renderCanvas();
   renderProps();
   syncCanvasControls();
+  syncStyleControls();
   save();
 }
+
+// reflect the selected element's color/opacity in the toolbar Style controls
+// 让工具栏样式控件反映当前选中元素的颜色/透明度
+function syncStyleControls() {
+  const sel = selection.kind === "el" ? primarySel() : null;
+  if (sel) {
+    $("#fillColor").value = sel.color || "#ffffff";
+    $("#opacity").value = sel.opacity != null ? sel.opacity : 1;
+  }
+}
+
+// apply a Style control to the current selection live (WYSIWYG) and keep as default
+// 把样式控件实时应用到选中元素（所见即所得），同时作为新元素默认值
+function applyStyleToSelection(key, val) {
+  if (selection.kind === "el" && selection.ids.length) {
+    selObjs().forEach(o => o[key] = val);
+    renderCanvas(); renderProps(); save();
+  }
+}
+$("#fillColor").addEventListener("input", (e) => applyStyleToSelection("color", e.target.value));
+$("#opacity").addEventListener("input", (e) => applyStyleToSelection("opacity", parseFloat(e.target.value)));
 
 function syncCanvasControls() {
   const p = activePage();
