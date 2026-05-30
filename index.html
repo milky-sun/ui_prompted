@@ -322,8 +322,17 @@ const CANVAS_PRESETS = [
 ];
 
 let project = null;        // { pages, activePageId, seq }
-let selectedId = null;
-let selectedKind = null;   // 'el' | 'memo'
+let selection = { kind: "el", ids: [] };   // multi-select / 复数选择
+// ---- selection helpers / 选择辅助 ----
+function clearSel() { selection = { kind: "el", ids: [] }; }
+function setSel(kind, ids) { selection = { kind, ids: ids.slice() }; }
+function isSel(id) { return selection.ids.indexOf(id) >= 0; }
+function selObjs() {
+  const page = activePage();
+  const src = selection.kind === "memo" ? page.memos : page.elements;
+  return selection.ids.map(id => src.find(o => o.id === id)).filter(Boolean);
+}
+function primarySel() { return selObjs()[0] || null; }
 let memoVisible = true;
 let mode = "visual";       // 'visual' | 'code' | 'preview'
 let codeDirty = false;     // code edited but not applied / 代码已改未应用
@@ -384,7 +393,7 @@ function migrate() {
     if (!p.canvasW) p.canvasW = 360;
     if (!p.canvasH) p.canvasH = 720;
     if (!p.memos) p.memos = [];
-    (p.elements || []).forEach(e => { if (e.note == null) e.note = ""; if (e.ref === undefined) e.ref = null; });
+    (p.elements || []).forEach(e => { if (e.note == null) e.note = ""; if (e.ref === undefined) e.ref = null; if (e.groupId === undefined) e.groupId = null; });
   });
 }
 
@@ -417,8 +426,8 @@ function renderPageList() {
       `<span class="home-dot">${p.isHome ? "★" : ""}</span>` +
       `<span class="name">${escapeHtml(p.name)}</span>` +
       `<span class="pgmenu" title="操作 Menu">⋯</span>`;
-    div.querySelector(".name").onclick = () => { project.activePageId = p.id; selectedId = null; render(); };
-    div.querySelector(".home-dot").onclick = () => { project.activePageId = p.id; selectedId = null; render(); };
+    div.querySelector(".name").onclick = () => { project.activePageId = p.id; clearSel(); render(); };
+    div.querySelector(".home-dot").onclick = () => { project.activePageId = p.id; clearSel(); render(); };
     div.querySelector(".pgmenu").onclick = (e) => { e.stopPropagation(); pageMenu(p); };
     list.appendChild(div);
   });
@@ -470,9 +479,10 @@ function renderCanvas() {
   memoLayer.style.display = memoVisible ? "" : "none";
   page.memos.forEach(m => memoLayer.appendChild(buildMemo(m)));
 
-  if (selectedId && mode !== "preview") {
-    const obj = findSelected();
-    if (obj) drawSelection(obj.x, obj.y, obj.w || 200, obj.h || 80);
+  if (selection.ids.length && mode !== "preview") {
+    const objs = selObjs();
+    const single = objs.length === 1;
+    objs.forEach(o => drawSelection(o.x, o.y, o.w || 200, o.h || 80, single));
   }
 }
 
@@ -620,38 +630,52 @@ function wrapText(parent, x, y, txt, maxW, size, fill) {
   if (line && lines < 5) flush();
 }
 
-function drawSelection(x, y, w, h) {
+function drawSelection(x, y, w, h, withHandle) {
   const o = document.createElementNS(SVGNS, "rect");
   o.setAttribute("class", "sel-outline");
   o.setAttribute("x", x - 2); o.setAttribute("y", y - 2);
   o.setAttribute("width", w + 4); o.setAttribute("height", h + 4);
   overlay.appendChild(o);
-  const hd = document.createElementNS(SVGNS, "rect");
-  hd.setAttribute("class", "resize-handle");
-  hd.setAttribute("x", x + w - 5); hd.setAttribute("y", y + h - 5);
-  hd.setAttribute("width", 12); hd.setAttribute("height", 12);
-  hd.setAttribute("rx", 2);
-  hd.dataset.handle = "resize";
-  overlay.appendChild(hd);
+  if (withHandle) {  // resize handle only for a single selection / 单选时才显示缩放手柄
+    const hd = document.createElementNS(SVGNS, "rect");
+    hd.setAttribute("class", "resize-handle");
+    hd.setAttribute("x", x + w - 5); hd.setAttribute("y", y + h - 5);
+    hd.setAttribute("width", 12); hd.setAttribute("height", 12);
+    hd.setAttribute("rx", 2);
+    hd.dataset.handle = "resize";
+    overlay.appendChild(hd);
+  }
+}
+
+// rubber-band selection rectangle / 框选矩形
+function drawBand(x, y, w, h) {
+  const b = document.createElementNS(SVGNS, "rect");
+  b.setAttribute("x", x); b.setAttribute("y", y);
+  b.setAttribute("width", w); b.setAttribute("height", h);
+  b.setAttribute("fill", "rgba(91,157,255,0.12)");
+  b.setAttribute("stroke", "#5b9dff"); b.setAttribute("stroke-width", "1");
+  b.setAttribute("stroke-dasharray", "3 2"); b.setAttribute("pointer-events", "none");
+  overlay.appendChild(b);
 }
 
 // ====================================================================
 // Properties panel / 属性面板
 // ====================================================================
-function findSelected() {
-  if (!selectedId) return null;
-  const page = activePage();
-  if (selectedKind === "memo") return page.memos.find(m => m.id === selectedId);
-  return page.elements.find(e => e.id === selectedId);
-}
-
 function renderProps() {
   const body = $("#propBody");
-  const obj = findSelected();
+  const objs = selObjs();
 
-  if (!obj) { renderCanvasProps(body); return; }
+  if (!objs.length) { renderCanvasProps(body); return; }
 
-  if (selectedKind === "memo") {
+  // ---- multi-selection / 复数选择 ----
+  if (selection.kind === "el" && objs.length > 1) {
+    renderMultiProps(body, objs);
+    return;
+  }
+
+  const obj = objs[0];
+
+  if (selection.kind === "memo") {
     body.innerHTML =
       `<div class="field"><label>Vibe Memo (给 AI 的描述 / note for AI)</label>` +
       `<textarea id="pMemoText">${escapeHtml(obj.text || "")}</textarea></div>` +
@@ -690,8 +714,15 @@ function renderProps() {
     html += `<div class="field"><label>🔗 链接到 Link to page</label>` +
       `<select id="pLink"><option value="">— 无 None —</option>${pageOpts(obj.linkTo)}</select></div>`;
   }
+  if (obj.groupId) html += `<button class="tool" id="pUngroup1" style="width:100%;margin-bottom:8px">⊟ 解除编组 Ungroup</button>`;
   html += `<button class="btn-danger" id="pDelete">删除 Delete</button>`;
   body.innerHTML = html;
+
+  if (obj.groupId && $("#pUngroup1")) $("#pUngroup1").onclick = () => {
+    const gid = obj.groupId;
+    activePage().elements.forEach(e => { if (e.groupId === gid) e.groupId = null; });
+    render(); toast("已解除编组 / Ungrouped");
+  };
 
   if (obj.type === "include") {
     $("#pRef").onchange = (e) => {
@@ -714,6 +745,64 @@ function renderProps() {
     };
   });
   $("#pDelete").onclick = deleteSelected;
+}
+
+// multi-selection panel / 复数选择面板
+function renderMultiProps(body, objs) {
+  const groupIds = new Set(objs.map(o => o.groupId).filter(Boolean));
+  const allSameGroup = groupIds.size === 1 && objs.every(o => o.groupId) &&
+    activePage().elements.filter(e => e.groupId === [...groupIds][0]).length === objs.length;
+  const anyGrouped = groupIds.size > 0;
+  body.innerHTML =
+    `<div class="field"><label>已选 Selected</label><div>${objs.length} 个元素 / elements</div></div>` +
+    `<button class="tool primary" id="pGroup" style="width:100%;margin-bottom:8px">⊞ 编组 Group</button>` +
+    (anyGrouped ? `<button class="tool" id="pUngroup" style="width:100%;margin-bottom:8px">⊟ 解除编组 Ungroup</button>` : "") +
+    `<div class="field row" style="margin-top:8px"><label style="margin:0">对齐 Align</label></div>` +
+    `<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:12px">` +
+    `<button class="tool" data-align="left">⇤ 左</button>` +
+    `<button class="tool" data-align="hcenter">⇔ 中</button>` +
+    `<button class="tool" data-align="right">⇥ 右</button>` +
+    `<button class="tool" data-align="top">⤒ 上</button>` +
+    `<button class="tool" data-align="vcenter">⇕ 中</button>` +
+    `<button class="tool" data-align="bottom">⤓ 下</button></div>` +
+    `<button class="btn-danger" id="pDelete">删除全部 Delete all</button>`;
+  if (allSameGroup) { const u = $("#pUngroup"); if (u) u.textContent = "⊟ 解除编组 Ungroup"; }
+  $("#pGroup").onclick = groupSelection;
+  if ($("#pUngroup")) $("#pUngroup").onclick = ungroupSelection;
+  body.querySelectorAll("[data-align]").forEach(b => b.onclick = () => alignSelection(b.dataset.align));
+  $("#pDelete").onclick = deleteSelected;
+}
+
+// group / ungroup via shared groupId / 通过共享 groupId 编组与解组
+function groupSelection() {
+  const objs = selObjs();
+  if (objs.length < 2) return;
+  const gid = nextId("g");
+  objs.forEach(o => o.groupId = gid);
+  render();
+  toast("已编组 / Grouped");
+}
+function ungroupSelection() {
+  selObjs().forEach(o => o.groupId = null);
+  render();
+  toast("已解除编组 / Ungrouped");
+}
+function alignSelection(how) {
+  const objs = selObjs();
+  if (objs.length < 2) return;
+  const xs = objs.map(o => o.x), ys = objs.map(o => o.y);
+  const x2 = objs.map(o => o.x + o.w), y2 = objs.map(o => o.y + o.h);
+  const minX = Math.min(...xs), maxX = Math.max(...x2);
+  const minY = Math.min(...ys), maxY = Math.max(...y2);
+  objs.forEach(o => {
+    if (how === "left") o.x = minX;
+    else if (how === "right") o.x = maxX - o.w;
+    else if (how === "hcenter") o.x = (minX + maxX) / 2 - o.w / 2;
+    else if (how === "top") o.y = minY;
+    else if (how === "bottom") o.y = maxY - o.h;
+    else if (how === "vcenter") o.y = (minY + maxY) / 2 - o.h / 2;
+  });
+  render();
 }
 
 // canvas-level properties shown when nothing selected / 未选中时显示画面属性
@@ -742,9 +831,10 @@ function wouldRecurse(includeEl, targetPageId, seen) {
 
 function deleteSelected() {
   const page = activePage();
-  if (selectedKind === "memo") page.memos = page.memos.filter(m => m.id !== selectedId);
-  else page.elements = page.elements.filter(e => e.id !== selectedId);
-  selectedId = null; selectedKind = null;
+  const ids = new Set(selection.ids);
+  if (selection.kind === "memo") page.memos = page.memos.filter(m => !ids.has(m.id));
+  else page.elements = page.elements.filter(e => !ids.has(e.id));
+  clearSel();
   render();
 }
 
@@ -782,7 +872,7 @@ function flattenInclude(el) {
   bake(ref, el.x, el.y, sc, 0);
   const page = activePage();
   page.elements = page.elements.filter(x => x.id !== el.id).concat(added);
-  selectedId = null; selectedKind = null;
+  clearSel();
   render();
   toast(`已拍平为 ${added.length} 个元素 / Flattened into ${added.length} elements`);
 }
@@ -822,10 +912,10 @@ function addElement(type, x, y) {
     text: d.text, note: "",
     color: $("#fillColor").value,
     opacity: parseFloat($("#opacity").value),
-    linkTo: null, ref: null,
+    linkTo: null, ref: null, groupId: null,
   };
   activePage().elements.push(el);
-  selectedId = el.id; selectedKind = "el";
+  setSel("el", [el.id]);
   render();
   if (type === "include") toast("在右侧选择要嵌入的页面 / Pick a page to embed →");
 }
@@ -833,7 +923,7 @@ function addElement(type, x, y) {
 function addMemo(x, y) {
   const m = { id: nextId("m"), x: clamp(x - 90, 0, cw() - 180), y: clamp(y - 35, 0, ch() - 70), w: 180, h: 70, text: "" };
   activePage().memos.push(m);
-  selectedId = m.id; selectedKind = "memo";
+  setSel("memo", [m.id]);
   memoVisible = true;
   render();
 }
@@ -841,53 +931,105 @@ function addMemo(x, y) {
 // ====================================================================
 // Interaction: move / resize on canvas / 画布上拖动与缩放
 // ====================================================================
-let drag = null;
+let drag = null;   // move / resize
+let band = null;   // rubber-band selection / 框选
+
+// expand an element id to its whole group (or just itself) / 展开到整组
+function groupMates(id) {
+  const el = activePage().elements.find(x => x.id === id);
+  if (el && el.groupId) return activePage().elements.filter(x => x.groupId === el.groupId).map(x => x.id);
+  return [id];
+}
 
 canvas.addEventListener("pointerdown", (e) => {
   if (mode !== "visual") {
-    // preview: follow link / 预览模式跳转
     if (mode === "preview") {
       const g = e.target.closest(".el");
       if (g) {
         const el = activePage().elements.find(x => x.id === g.dataset.id);
         if (el && el.linkTo && project.pages.some(p => p.id === el.linkTo)) {
-          project.activePageId = el.linkTo; selectedId = null; render();
+          project.activePageId = el.linkTo; clearSel(); render();
         }
       }
     }
     return;
   }
+  // resize handle (single selection only) / 缩放手柄（仅单选）
   if (e.target.dataset && e.target.dataset.handle === "resize") {
-    const obj = findSelected();
+    const obj = primarySel();
     if (!obj) return;
     drag = { mode: "resize", obj, startX: e.clientX, startY: e.clientY, ow: obj.w, oh: obj.h };
     canvas.setPointerCapture(e.pointerId);
     return;
   }
   const g = e.target.closest(".el, .memo-card");
-  if (!g) { selectedId = null; selectedKind = null; renderCanvas(); renderProps(); return; }
-  selectedId = g.dataset.id; selectedKind = g.dataset.kind;
-  const obj = findSelected();
-  drag = { mode: "move", obj, startX: e.clientX, startY: e.clientY, ox: obj.x, oy: obj.y };
+  if (!g) {
+    // empty area → rubber-band select / 空白处框选
+    if (!e.shiftKey) clearSel();
+    const pt = clientToSvg(e.clientX, e.clientY);
+    band = { x0: pt.x, y0: pt.y, base: selection.kind === "el" ? selection.ids.slice() : [] };
+    canvas.setPointerCapture(e.pointerId);
+    renderCanvas(); renderProps();
+    return;
+  }
+  const id = g.dataset.id, kind = g.dataset.kind;
+  if (kind === "memo") {
+    setSel("memo", [id]);
+  } else {
+    const mates = groupMates(id);
+    if (e.shiftKey && selection.kind === "el") {
+      let ids = selection.ids.slice();
+      const allIn = mates.every(m => ids.indexOf(m) >= 0);
+      ids = allIn ? ids.filter(m => mates.indexOf(m) < 0) : ids.concat(mates.filter(m => ids.indexOf(m) < 0));
+      setSel("el", ids);
+    } else if (!(selection.kind === "el" && isSel(id))) {
+      setSel("el", mates);   // not yet selected → select its group
+    }
+  }
+  // begin moving every selected object / 拖动所有已选
+  const items = selObjs().map(o => ({ o, ox: o.x, oy: o.y }));
+  drag = { mode: "move", startX: e.clientX, startY: e.clientY, items };
   canvas.setPointerCapture(e.pointerId);
   renderCanvas(); renderProps();
 });
 
 canvas.addEventListener("pointermove", (e) => {
-  if (!drag) return;
   const scale = canvas.getBoundingClientRect().width / cw();
+  if (band) {
+    const pt = clientToSvg(e.clientX, e.clientY);
+    const bx = Math.min(band.x0, pt.x), by = Math.min(band.y0, pt.y);
+    const bw = Math.abs(pt.x - band.x0), bh = Math.abs(pt.y - band.y0);
+    const hit = [];
+    activePage().elements.forEach(el => {
+      if (el.x < bx + bw && el.x + el.w > bx && el.y < by + bh && el.y + el.h > by) {
+        groupMates(el.id).forEach(m => { if (hit.indexOf(m) < 0) hit.push(m); });
+      }
+    });
+    const ids = band.base.slice();
+    hit.forEach(m => { if (ids.indexOf(m) < 0) ids.push(m); });
+    setSel("el", ids);
+    renderCanvas(); drawBand(bx, by, bw, bh);
+    return;
+  }
+  if (!drag) return;
   const dx = (e.clientX - drag.startX) / scale;
   const dy = (e.clientY - drag.startY) / scale;
   if (drag.mode === "move") {
-    drag.obj.x = clamp(drag.ox + dx, 0, cw() - (drag.obj.w || 180));
-    drag.obj.y = clamp(drag.oy + dy, 0, ch() - (drag.obj.h || 70));
+    drag.items.forEach(it => {
+      it.o.x = clamp(it.ox + dx, 0, cw() - (it.o.w || 180));
+      it.o.y = clamp(it.oy + dy, 0, ch() - (it.o.h || 70));
+    });
   } else if (drag.mode === "resize") {
     drag.obj.w = clamp(drag.ow + dx, 24, cw() - drag.obj.x);
     drag.obj.h = clamp(drag.oh + dy, 20, ch() - drag.obj.y);
   }
   renderCanvas();
 });
-canvas.addEventListener("pointerup", () => { if (drag) { drag = null; renderProps(); save(); } });
+
+canvas.addEventListener("pointerup", () => {
+  if (band) { band = null; renderProps(); save(); return; }
+  if (drag) { drag = null; renderProps(); save(); }
+});
 
 function clientToSvg(cx, cy) {
   const r = canvas.getBoundingClientRect();
@@ -905,7 +1047,7 @@ $("#toolbar").addEventListener("click", (e) => {
   const act = btn.dataset.act;
   if (act === "newpage") {
     const name = prompt("新页面名称 / New page name:", "Page " + (project.pages.length + 1));
-    if (name !== null) { const p = createPage(name.trim() || undefined); project.activePageId = p.id; selectedId = null; render(); }
+    if (name !== null) { const p = createPage(name.trim() || undefined); project.activePageId = p.id; clearSel(); render(); }
   } else if (act === "export") {
     exportJSON();
   } else if (act === "import") {
@@ -913,7 +1055,7 @@ $("#toolbar").addEventListener("click", (e) => {
   } else if (act === "view") {
     setMode(btn.dataset.mode);
   } else if (act === "link") {
-    if (selectedKind === "el" && selectedId) { toast("在右侧面板选择目标页面 / Pick target page in the panel →"); const s = $("#pLink"); if (s) s.focus(); }
+    if (selection.kind === "el" && selection.ids.length === 1) { toast("在右侧面板选择目标页面 / Pick target page in the panel →"); const s = $("#pLink"); if (s) s.focus(); }
     else toast("先选中一个元素 / Select an element first");
   } else if (act === "foldmemo") {
     memoVisible = !memoVisible;
@@ -947,7 +1089,7 @@ function setMode(m) {
   mode = m;
   document.body.className = "mode-" + m;
   document.querySelectorAll('[data-act="view"]').forEach(b => b.classList.toggle("active", b.dataset.mode === m));
-  selectedId = null;
+  clearSel();
   if (m === "code") renderCode();
   render();
   if (m === "preview") toast("预览：点击带🔗的元素跳转 / Preview: click 🔗 elements to jump");
@@ -970,7 +1112,7 @@ $("#fileInput").addEventListener("change", (e) => {
       if (!data.pages || !Array.isArray(data.pages)) throw new Error("invalid");
       project = data; migrate();
       if (!project.activePageId) project.activePageId = project.pages[0].id;
-      selectedId = null; render();
+      clearSel(); render();
       toast("已导入 / Imported");
     } catch (err) { toast("导入失败 / Import failed"); }
   };
@@ -992,6 +1134,25 @@ function pageNameById(id) { const p = project.pages.find(x => x.id === id); retu
 function esc(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;"); }
 function r(n) { return Math.round(n); }
 
+// one element's XML line(s) with the given indent / 单个元素的 XML 行
+function emitEl(el, ind) {
+  let s = "";
+  if (el.note && el.note.trim()) {
+    s += `${ind}<!-- ${el.note.replace(/\r?\n/g, " ").replace(/--+/g, "—").trim()} -->\n`;
+  }
+  let attrs;
+  if (el.type === "include") {
+    attrs = [`ref="${esc(pageNameById(el.ref))}"`, `x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`];
+  } else {
+    attrs = [`x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`,
+             `color="${el.color}"`, `opacity="${el.opacity != null ? el.opacity : 1}"`];
+    if (el.text) attrs.push(`text="${esc(el.text)}"`);
+    if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
+  }
+  s += `${ind}<${el.type} ${attrs.join(" ")}/>\n`;
+  return s;
+}
+
 function buildMarkdown() {
   let md = "";
   md += "# Android UI Design / 安卓界面设计\n\n";
@@ -1006,20 +1167,17 @@ function buildMarkdown() {
     md += `## ${p.name}${p.isHome ? " (Home)" : ""}\n\n`;
     md += "```xml\n";
     md += `<screen name="${esc(p.name)}"${p.isHome ? ' home="true"' : ""} width="${p.canvasW}" height="${p.canvasH}">\n`;
+    const emitted = new Set();   // groups already written / 已写出的组
     p.elements.forEach(el => {
-      if (el.note && el.note.trim()) {
-        md += `  <!-- ${el.note.replace(/\r?\n/g, " ").replace(/--+/g, "—").trim()} -->\n`;
-      }
-      let attrs;
-      if (el.type === "include") {
-        attrs = [`ref="${esc(pageNameById(el.ref))}"`, `x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`];
+      if (el.groupId) {
+        if (emitted.has(el.groupId)) return;       // group written already
+        emitted.add(el.groupId);
+        md += `  <group>\n`;
+        p.elements.filter(x => x.groupId === el.groupId).forEach(ge => { md += emitEl(ge, "    "); });
+        md += `  </group>\n`;
       } else {
-        attrs = [`x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`,
-                 `color="${el.color}"`, `opacity="${el.opacity != null ? el.opacity : 1}"`];
-        if (el.text) attrs.push(`text="${esc(el.text)}"`);
-        if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
+        md += emitEl(el, "  ");
       }
-      md += `  <${el.type} ${attrs.join(" ")}/>\n`;
     });
     md += `</screen>\n`;
     md += "```\n\n";
@@ -1094,10 +1252,8 @@ function parseScreen(xml, page, id, linkFix, refFix) {
   if (screen.getAttribute && screen.getAttribute("height")) page.canvasH = parseInt(screen.getAttribute("height")) || 720;
   if (screen.getAttribute && screen.getAttribute("home") === "true") page.isHome = true;
 
-  let note = "";
-  screen.childNodes.forEach(node => {
-    if (node.nodeType === 8) { note = (node.nodeValue || "").trim(); return; }
-    if (node.nodeType !== 1) return;
+  // parse one element node (not <group>) / 解析单个元素节点
+  function parseEl(node, note, groupId) {
     const type = node.tagName.toLowerCase();
     const num = (a, d) => { const v = node.getAttribute(a); return v != null && v !== "" ? parseFloat(v) : d; };
     const el = {
@@ -1106,11 +1262,27 @@ function parseScreen(xml, page, id, linkFix, refFix) {
       text: node.getAttribute("text") || "", note,
       color: node.getAttribute("color") || "#ffffff",
       opacity: node.getAttribute("opacity") != null ? parseFloat(node.getAttribute("opacity")) : 1,
-      linkTo: null, ref: null,
+      linkTo: null, ref: null, groupId: groupId || null,
     };
     const lk = node.getAttribute("link"); if (lk) linkFix.push({ el, name: lk });
     const rf = node.getAttribute("ref"); if (rf) refFix.push({ el, name: rf });
     page.elements.push(el);
+  }
+
+  let note = "";
+  screen.childNodes.forEach(node => {
+    if (node.nodeType === 8) { note = (node.nodeValue || "").trim(); return; }
+    if (node.nodeType !== 1) return;
+    if (node.tagName.toLowerCase() === "group") {     // <group> wrapper / 组
+      const gid = id("g");
+      let gnote = "";
+      node.childNodes.forEach(c => {
+        if (c.nodeType === 8) { gnote = (c.nodeValue || "").trim(); return; }
+        if (c.nodeType === 1) { parseEl(c, gnote, gid); gnote = ""; }
+      });
+    } else {
+      parseEl(node, note, null);
+    }
     note = "";
   });
 }
@@ -1135,7 +1307,7 @@ function applyCode() {
     const proj = parseMarkdown(codeArea.value);
     project = proj;
     migrate();              // fill defaults on the new project / 为新项目补默认值
-    selectedId = null; selectedKind = null; codeDirty = false;
+    clearSel(); codeDirty = false;
     toast("已应用到设计 / Applied to design");
     return true;
   } catch (err) {
@@ -1189,9 +1361,16 @@ function fallbackCopy(t) {
 // Keyboard / 键盘
 // ====================================================================
 document.addEventListener("keydown", (e) => {
-  if ((e.key === "Delete" || e.key === "Backspace") && selectedId && mode === "visual" &&
-      document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+  const typing = document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA";
+  if (typing || mode !== "visual") return;
+  if ((e.key === "Delete" || e.key === "Backspace") && selection.ids.length) {
     e.preventDefault(); deleteSelected();
+  } else if ((e.metaKey || e.ctrlKey) && (e.key === "g" || e.key === "G")) {
+    e.preventDefault();
+    if (e.shiftKey) ungroupSelection(); else groupSelection();
+  } else if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
+    e.preventDefault();
+    setSel("el", activePage().elements.map(el => el.id)); render();
   }
 });
 

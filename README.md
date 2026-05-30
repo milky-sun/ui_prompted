@@ -28,6 +28,8 @@ open index.html
   Link an element to another page; click to jump in Preview mode.
 - **📦 嵌入 Include / 🧩 拍平 Flatten**: 把一整页作为元素嵌入（显示缩放快照），或"拍平"成算好坐标的普通元素副本。
   Embed a whole page as an element (scaled snapshot), or flatten it into copied primitives with computed coordinates.
+- **复数选择 + 编组 Multi-select + Group**: Shift+点击 / 空白处框选多选；⌘/Ctrl+A 全选；⌘/Ctrl+G 编组、⌘/Ctrl+⇧+G 解组；可一键对齐。组在导出里用 `<group>` 包裹。
+  Shift-click or rubber-band to multi-select; ⌘/Ctrl+A select all; ⌘/Ctrl+G group, ⌘/Ctrl+⇧+G ungroup; one-click align. Groups export as `<group>` wrappers.
 - **画面尺寸 Canvas size**: 每页可选预设或自由设定宽高。
   Per-page preset or custom width/height.
 - **页面 Pages**: 左侧纵向页面列表，支持入口页 (Home)。

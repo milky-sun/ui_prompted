@@ -24,20 +24,22 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 - **画面尺寸 canvas size**: 每页独立 `canvasW/canvasH`，预设见 `CANVAS_PRESETS`，与 `<screen width height>` 联动。
 - **页面嵌套 include**: `include` 元素引用其他页面，画布上画 1 层缩放快照（`drawShapes` 的 `depth<1` 守卫，不递归）。`wouldRecurse()` 防环。
 - **拍平 flatten**: `flattenInclude()` 把 include 按算好的坐标"复制粘贴"成普通元素（类似 group 粘贴）。一次性、不联动、用 visited 集防环——**绝对安全**，比实时递归嵌套稳。
+- **复数选择 multi-select**: 状态 `selection = {kind, ids[]}`。Shift+点击切换、空白处拖拽框选（rubber-band，`band`）、⌘/Ctrl+A 全选。多选时拖动整体移动；缩放手柄仅单选。
+- **编组 group**: 用共享 `groupId` 标记（**不做真正的嵌套树**，数组保持扁平）。点击组内任一元素即整组选中；⌘/Ctrl+G 编组、⌘/Ctrl+⇧+G 解组。导出时用 `<group>…</group>` 包裹，解析回来重新分配 groupId。对齐 `alignSelection()`。
 - **保存**: localStorage 自动保存/自动加载；JSON 文件 Import/Export 用于备份迁移。`migrate()` 兼容旧数据。
 
 ## 数据结构 / Data model
 ```
 project = { pages:[ { id, name, isHome, canvasW, canvasH,
-  elements:[ {id,type,x,y,w,h,text,note,color,opacity,linkTo,ref} ],
+  elements:[ {id,type,x,y,w,h,text,note,color,opacity,linkTo,ref,groupId} ],
   memos:[ {id,x,y,w,h,text} ] } ], activePageId, seq }
 ```
 - 元素类型 element types: `rect` | `textfield` | `button` | `list` | `include`（`ref`=被嵌入页面 id）
+- `groupId`：同值 = 同组（扁平标记，非嵌套）。
 - localStorage key: `easy-xml-project-v1`
 
 ## 待办 / TODO（候选）
 - [ ] 元素层级排序 z-order
 - [ ] 撤销/重做 undo/redo
 - [ ] 更多控件（图片 / 开关 / 顶栏）more widgets
-- [ ] 多选与对齐 multi-select & align
 - [ ] 直接输出可粘贴的项目快照（HTML 内嵌）
