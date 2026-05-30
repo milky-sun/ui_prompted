@@ -36,11 +36,26 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 12px;
+    padding: 8px 44px 8px 12px;   /* room for collapse button / 给折叠按钮留位 */
     background: var(--panel);
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
+    position: relative;
   }
+  #tbToggle {
+    position: absolute; top: 8px; right: 10px; z-index: 5;
+    width: 28px; height: 28px; padding: 0; line-height: 1;
+  }
+  /* collapsed toolbar -> slim mini bar / 折叠后的细条 */
+  #tbMini {
+    display: none;
+    align-items: center; gap: 8px;
+    padding: 6px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  body.tb-collapsed #toolbar { display: none; }
+  body.tb-collapsed #tbMini { display: flex; }
   .group {
     display: flex;
     align-items: center;
@@ -118,11 +133,24 @@
     align-items: flex-start;
     justify-content: center;
     padding: 32px;
+    position: relative;
     background:
       linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px),
       linear-gradient(rgba(255,255,255,.02) 1px, transparent 1px);
     background-size: 20px 20px;
   }
+  /* floating zoom control / 浮动缩放控件 */
+  #zoombar {
+    position: absolute; right: 14px; bottom: 14px; z-index: 6;
+    display: flex; align-items: center; gap: 4px;
+    background: rgba(38,40,47,.92); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  }
+  #zoombar button { width: 26px; height: 26px; padding: 0; }
+  #zoombar input { width: 46px; text-align: right; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 4px; font-size: 12px; }
+  #zoombar .pct { color: var(--muted); font-size: 12px; margin-right: 2px; }
+  body.mode-code #zoombar { display: none; }
   #phone {
     background: #11131a;
     border-radius: 28px;
@@ -206,6 +234,7 @@
 
 <!-- ======== Toolbar / 工具栏 ======== -->
 <div id="toolbar">
+  <button class="tool" id="tbToggle" data-act="collapse" title="折叠工具栏 / Collapse toolbar">▲</button>
   <div class="group">
     <span class="group-label">控制 Control</span>
     <button class="tool" data-act="newpage">＋ 新页 New</button>
@@ -251,6 +280,14 @@
   </div>
 </div>
 
+<!-- ======== Mini bar (collapsed) / 折叠后的细条 ======== -->
+<div id="tbMini">
+  <button class="tool" data-act="expand" title="展开工具栏 / Expand toolbar">☰ 菜单 Menu</button>
+  <button class="tool" data-act="view" data-mode="visual">🎨 设计</button>
+  <button class="tool" data-act="view" data-mode="code">{ } 代码</button>
+  <button class="tool" data-act="view" data-mode="preview">▶ 预览</button>
+</div>
+
 <!-- ======== Main / 主区域 ======== -->
 <div id="main">
   <!-- Page list / 页面列表 -->
@@ -267,6 +304,13 @@
         <g id="memoLayer"></g>
         <g id="overlay"></g>
       </svg>
+    </div>
+    <!-- zoom control / 缩放控件 -->
+    <div id="zoombar">
+      <button class="tool" id="zOut" title="缩小 Zoom out">−</button>
+      <input type="text" id="zVal" title="缩放百分比 / Zoom %"><span class="pct">%</span>
+      <button class="tool" id="zIn" title="放大 Zoom in">＋</button>
+      <button class="tool" id="zFit" title="适应窗口 / Fit to window">适应 Fit</button>
     </div>
   </div>
 
@@ -336,6 +380,8 @@ function primarySel() { return selObjs()[0] || null; }
 let memoVisible = true;
 let mode = "visual";       // 'visual' | 'code' | 'preview'
 let codeDirty = false;     // code edited but not applied / 代码已改未应用
+let zoom = 1;              // canvas zoom factor / 画布缩放倍数
+let zoomFit = true;        // auto-fit to window / 自动适应窗口
 
 const SVGNS = "http://www.w3.org/2000/svg";
 const $ = (sel) => document.querySelector(sel);
@@ -467,9 +513,8 @@ function pageMenu(p) {
 function renderCanvas() {
   const page = activePage();
   const W = cw(), H = ch();
-  canvas.setAttribute("width", W);
-  canvas.setAttribute("height", H);
   canvas.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  applyZoom();   // sets width/height from zoom / 按缩放设置宽高
 
   elLayer.innerHTML = "";
   memoLayer.innerHTML = "";
@@ -1039,9 +1084,36 @@ function clientToSvg(cx, cy) {
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 // ====================================================================
+// Zoom / 缩放
+// ====================================================================
+function fitZoom() {
+  const s = $("#stage");
+  const availW = s.clientWidth - 64;   // padding margin / 留白
+  const availH = s.clientHeight - 64;
+  const z = Math.min(availW / cw(), availH / ch());
+  return clamp(z, 0.1, 1);             // never upscale past 100% / 不放大超过 100%
+}
+function applyZoom() {
+  if (zoomFit) zoom = fitZoom();
+  canvas.setAttribute("width", cw() * zoom);
+  canvas.setAttribute("height", ch() * zoom);
+  const zv = $("#zVal"); if (zv) zv.value = Math.round(zoom * 100);
+  const zf = $("#zFit"); if (zf) zf.classList.toggle("active", zoomFit);
+}
+function setZoom(z) { zoomFit = false; zoom = clamp(z, 0.1, 4); applyZoom(); }
+
+$("#zOut").onclick = () => setZoom(Math.round((zoom - 0.1) * 10) / 10);
+$("#zIn").onclick = () => setZoom(Math.round((zoom + 0.1) * 10) / 10);
+$("#zFit").onclick = () => { zoomFit = true; applyZoom(); };
+$("#zVal").onchange = (e) => { const v = parseInt(e.target.value); if (v) setZoom(v / 100); };
+window.addEventListener("resize", () => { if (zoomFit) applyZoom(); });
+
+// ====================================================================
 // Toolbar actions / 工具栏动作
 // ====================================================================
-$("#toolbar").addEventListener("click", (e) => {
+// listen on document so both the toolbar and the collapsed mini-bar work
+// 监听 document，让工具栏和折叠后的细条都生效
+document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-act]");
   if (!btn) return;
   const act = btn.dataset.act;
@@ -1061,6 +1133,12 @@ $("#toolbar").addEventListener("click", (e) => {
     memoVisible = !memoVisible;
     $("#toggleMemo").classList.toggle("active", !memoVisible);
     renderCanvas();
+  } else if (act === "collapse") {
+    document.body.classList.add("tb-collapsed");
+    if (zoomFit) applyZoom();   // toolbar gone → more room → refit / 重新适应
+  } else if (act === "expand") {
+    document.body.classList.remove("tb-collapsed");
+    if (zoomFit) applyZoom();
   }
 });
 

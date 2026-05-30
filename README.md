@@ -32,6 +32,8 @@ open index.html
   Shift-click or rubber-band to multi-select; ⌘/Ctrl+A select all; ⌘/Ctrl+G group, ⌘/Ctrl+⇧+G ungroup; one-click align. Groups export as `<group>` wrappers.
 - **画面尺寸 Canvas size**: 每页可选预设或自由设定宽高。
   Per-page preset or custom width/height.
+- **小窗适配 Small viewport**: 工具栏可折叠（☰ 展开），画布自动缩放适应窗口，右下角可输入缩放百分比。
+  Collapsible toolbar (☰ to expand); the canvas auto-fits the window, with a zoom % box at the bottom-right.
 - **页面 Pages**: 左侧纵向页面列表，支持入口页 (Home)。
   Vertical page list on the left, with a Home entry page.
 - **保存 Persistence**: 自动保存到 localStorage（刷新不丢）。

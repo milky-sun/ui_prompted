@@ -27,6 +27,8 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 - **复数选择 multi-select**: 状态 `selection = {kind, ids[]}`。Shift+点击切换、空白处拖拽框选（rubber-band，`band`）、⌘/Ctrl+A 全选。多选时拖动整体移动；缩放手柄仅单选。
 - **编组 group**: 用共享 `groupId` 标记（**不做真正的嵌套树**，数组保持扁平）。点击组内任一元素即整组选中；⌘/Ctrl+G 编组、⌘/Ctrl+⇧+G 解组。导出时用 `<group>…</group>` 包裹，解析回来重新分配 groupId。对齐 `alignSelection()`。
 - **保存**: localStorage 自动保存/自动加载；JSON 文件 Import/Export 用于备份迁移。`migrate()` 兼容旧数据。
+- **小窗适配 small viewport**: 工具栏可折叠（`body.tb-collapsed` → 隐藏 `#toolbar`，显示细条 `#tbMini`，含 ☰ 展开 + 视图切换）。工具栏点击监听挂在 `document` 上，使折叠后的细条按钮也生效。
+- **缩放 zoom**: `zoom` + `zoomFit`（默认自动适应）。`fitZoom()` 按 `#stage` 可用区域计算（上限 100%，不放大）。`applyZoom()` 只改 SVG width/height（viewBox 不变），故拖拽/落点的 `scale = rect.width/cw()` 自动跟随缩放，无需额外换算。右下角浮动 `#zoombar`：− / % 输入 / ＋ / 适应。`window resize` 时若 fit 则重算。
 
 ## 数据结构 / Data model
 ```
