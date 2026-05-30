@@ -1671,14 +1671,12 @@ function buildMarkdown() {
   md += "# UI Design\n\n";
 
   const target = project.target || "Android";
-  md += `<!-- [TARGET: ${target}] -->\n`;
   const home = project.pages.find(p => p.isHome);
-  if (home) md += `<!-- [HOME: ${home.name}] -->\n`;
-  md += "\n";
+  md += `> Target: ${target}\n`;
+  md += `> Entry point (first screen shown on app launch): ${home ? "`" + home.name + "`" : "—"}\n\n`;
 
   project.pages.forEach(p => {
-    md += `<!-- [PAGE: ${p.name}] -->\n`;
-    md += `## ${p.name}${p.isHome ? " (Home)" : ""}\n\n`;
+    md += `## ${p.name}${p.isHome ? " (entry point)" : ""}\n\n`;
     md += "```xml\n";
     md += `<screen name="${esc(p.name)}"${p.isHome ? ' home="true"' : ""} width="${p.canvasW}" height="${p.canvasH}">\n`;
     const emitted = new Set();   // groups already written / 已写出的组
@@ -1718,9 +1716,11 @@ function parseMarkdown(md) {
   const id = (pre) => pre + (++n);
   const linkFix = [], refFix = [];
 
-  const targetM = md.match(/\[TARGET:\s*([^\]]*)\]/);
+  // target: from readable "> Target: X" line (or legacy [TARGET:] marker)
+  const targetM = md.match(/^>\s*Target:\s*(.+?)\s*$/m) || md.match(/\[TARGET:\s*([^\]]*)\]/);
   proj.target = targetM ? targetM[1].trim() : "Android";
-  const homeM = md.match(/\[HOME:\s*([^\]]*)\]/);
+  // entry/home: prefer screen home="true"; fall back to the readable line or legacy [HOME:]
+  const homeM = md.match(/Entry point[^\n]*:\s*`?([^`\n]+?)`?\s*$/m) || md.match(/\[HOME:\s*([^\]]*)\]/);
   const homeName = homeM ? homeM[1].trim() : null;
 
   const parts = md.split(/^##\s+/m).slice(1);
@@ -1728,7 +1728,7 @@ function parseMarkdown(md) {
 
   parts.forEach(part => {
     const nl = part.indexOf("\n");
-    let header = (nl >= 0 ? part.slice(0, nl) : part).trim().replace(/\(Home\)\s*$/i, "").trim();
+    let header = (nl >= 0 ? part.slice(0, nl) : part).trim().replace(/\((entry point|Home)\)\s*$/i, "").trim();
     const bodyTxt = nl >= 0 ? part.slice(nl + 1) : "";
     const page = { id: id("p"), name: header || ("Page " + n), isHome: false, elements: [], memos: [], canvasW: 360, canvasH: 720 };
 

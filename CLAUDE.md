@@ -22,7 +22,10 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 ## 设计决策 / Decisions
 - **形态**: 单页 `index.html`，无构建，浏览器直接打开。Single self-contained HTML, no build.
 - **渲染**: SVG。元素层 `#elLayer` / 备忘层 `#memoLayer`（可折叠）/ 选中层 `#overlay`。
-- **输出**: Markdown 容器 + XML 风结构（呼应项目名 easy-xml）+ Vibe Memos + Links；用 `<!-- [HOME:] -->` `<!-- [PAGE:] -->` 注释标记。
+- **输出**: Markdown 容器 + XML 风结构（呼应项目名 easy-xml）+ Vibe Memos + Links。
+- **格式分工**: **JSON = 正本**（save/load/Import/Export，无损、`JSON.parse` 即可、最稳）；**Markdown = 面向 AI 的输出**（Code 视图仍可双向编辑，靠 `## 标题`+`home="true"` 解析，不依赖控制注释）。
+- **已删除控制注释**: `<!-- [PAGE:] -->`（解析器从不使用）、`<!-- [HOME:] -->`（与 `home="true"` 重复）。`target` 与入口改为**可读平文行**：`> Target: X` 和 `> Entry point (first screen shown on app launch): \`Name\``，解析器从这两行读取（兼容旧的 `[TARGET:]/[HOME:]`）。
+- **入口表达 entry point**: 入口页标题为 `## Name (entry point)`，screen 保留 `home="true"`，顶部平文句明确"启动时首屏"，避免被当成"首页 tab"。
 - **元素注释 element note**: 每个元素可写 `note`，导出时作为紧邻该元素上方的 XML 注释行 `<!-- … -->`（AI 易读，且与元素强绑定）。区别于画面级的 Vibe Memo。
 - **视图模式 view modes**: `mode = visual | code | preview`，由 `body.mode-*` class 控制可见性；废弃了原 Markdown 弹窗。
 - **Code 视图**: 可编辑的 Markdown+XML，`buildMarkdown()` 生成、`parseMarkdown()` 解析回模型（双向）。"应用 Apply" 显式回写；解析失败则留在 code 模式并 toast 报错。
