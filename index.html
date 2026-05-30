@@ -581,14 +581,17 @@ function syncStyleControls() {
 // 把样式控件实时应用到选中元素（所见即所得），同时作为新元素默认值
 function applyStyleToSelection(key, val) {
   if (selection.kind === "el" && selection.ids.length) {
+    flushEditSnap();   // push pre-edit state on first change of this focus session
     selObjs().forEach(o => o[key] = val);
     renderCanvas(); renderProps(); save();
   }
 }
 $("#fillColor").addEventListener("input", (e) => applyStyleToSelection("color", e.target.value));
 $("#opacity").addEventListener("input", (e) => applyStyleToSelection("opacity", parseFloat(e.target.value)));
-// snapshot once when a Style control gains focus (so the edit is undoable) / 聚焦时快照一次
-["#fillColor", "#opacity"].forEach(s => $(s).addEventListener("focus", () => { if (selection.ids.length) snapshot(); }));
+// capture pre-edit state on focus; flushed only if an actual change happens / 聚焦记前态，改动才入栈
+["#fillColor", "#opacity"].forEach(s => $(s).addEventListener("focus", () => {
+  if (selection.kind === "el" && selection.ids.length) editSnap = JSON.stringify(project);
+}));
 
 function syncCanvasControls() {
   const p = activePage();
@@ -1293,7 +1296,8 @@ function flattenInclude(el) {
 }
 
 function applyCanvasSize(w, h) {
-  snapshot();
+  // NOTE: caller is responsible for snapshot() — toolbar handlers snapshot directly,
+  // the #props cpW/cpH path is covered by the focusin/flushEditSnap session.
   const p = activePage();
   p.canvasW = clamp(w, 120, 4000);
   p.canvasH = clamp(h, 120, 4000);
@@ -1448,15 +1452,20 @@ canvas.addEventListener("pointermove", (e) => {
   if (drag.mode === "move") {
     const its = drag.items;
     let ndx = dx, ndy = dy;
-    const bx0 = Math.min(...its.map(it => it.ox)) + ndx;
-    const by0 = Math.min(...its.map(it => it.oy)) + ndy;
-    const bx1 = Math.max(...its.map(it => it.ox + it.o.w)) + ndx;
-    const by1 = Math.max(...its.map(it => it.oy + it.o.h)) + ndy;
-    const snap = smartSnap(bx0, by0, bx1, by1);
+    // selection bounding box at origin (no delta) / 选区原始外框
+    const ax0 = Math.min(...its.map(it => it.ox));
+    const ay0 = Math.min(...its.map(it => it.oy));
+    const ax1 = Math.max(...its.map(it => it.ox + it.o.w));
+    const ay1 = Math.max(...its.map(it => it.oy + it.o.h));
+    const snap = smartSnap(ax0 + ndx, ay0 + ndy, ax1 + ndx, ay1 + ndy);
     ndx += snap.ox; ndy += snap.oy;
+    // clamp the WHOLE group's delta so the group stays rigid at the edges
+    // 对整组的位移做钳制，避免靠边时各元素分别截断导致变形
+    ndx = clamp(ndx, -ax0, cw() - ax1);
+    ndy = clamp(ndy, -ay0, ch() - ay1);
     its.forEach(it => {
-      it.o.x = clamp(it.ox + ndx, 0, cw() - it.o.w);
-      it.o.y = clamp(it.oy + ndy, 0, ch() - it.o.h);
+      it.o.x = it.ox + ndx;
+      it.o.y = it.oy + ndy;
     });
     scheduleCanvas(() => snap.guides.forEach(drawGuide));
   } else if (drag.mode === "resize") {
@@ -1469,8 +1478,8 @@ canvas.addEventListener("pointermove", (e) => {
 });
 
 canvas.addEventListener("pointerup", () => {
-  if (band) { band = null; renderProps(); save(); return; }
-  if (drag) { drag = null; renderProps(); save(); }
+  if (band) { band = null; renderCanvas(); renderProps(); save(); return; }   // clear band rect
+  if (drag) { drag = null; renderCanvas(); renderProps(); save(); }            // clear snap guides
 });
 
 // snap the selection bbox to other elements' edges/centers & canvas guides; else grid
@@ -1556,10 +1565,12 @@ function editTextInline(el) {
   inlineEditor = inp;
   inp.focus(); inp.select();
   const orig = el.text || "";
+  editSnap = JSON.stringify(project);   // pre-edit state; pushed on first change
   let done = false;
   const commit = (keep) => {
     if (done) return; done = true;
     el.text = keep ? inp.value : orig;   // Escape restores original / Esc 还原
+    if (!keep) editSnap = null;          // no change kept → discard pending snapshot
     save();
     inp.remove(); inlineEditor = null; renderCanvas(); renderProps();
   };
@@ -1569,7 +1580,7 @@ function editTextInline(el) {
     else if (ev.key === "Escape") { ev.preventDefault(); commit(false); }
   });
   inp.addEventListener("blur", () => commit(true));
-  inp.addEventListener("input", () => { el.text = inp.value; renderCanvas(); });
+  inp.addEventListener("input", () => { flushEditSnap(); el.text = inp.value; renderCanvas(); });
 }
 
 function clientToSvg(cx, cy) {
@@ -1659,10 +1670,10 @@ $("#canvasPreset").addEventListener("change", (e) => {
   const v = e.target.value;
   if (v === "custom") return;
   const p = CANVAS_PRESETS[+v];
-  if (p) applyCanvasSize(p.w, p.h);
+  if (p) { snapshot(); applyCanvasSize(p.w, p.h); }
 });
-$("#canvasW").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(v, activePage().canvasH); });
-$("#canvasH").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(activePage().canvasW, v); });
+$("#canvasW").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) { snapshot(); applyCanvasSize(v, activePage().canvasH); } });
+$("#canvasH").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) { snapshot(); applyCanvasSize(activePage().canvasW, v); } });
 
 // ---- view mode switch / 视图切换 ----
 function setMode(m) {
@@ -1987,10 +1998,22 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// snapshot once when the user starts editing a property field / 编辑属性前快照一次
+// lazy edit-session history: capture pre-state on focus, push it to undo ONLY on
+// the first actual change (avoids polluting history with no-op focus events)
+// 惰性编辑历史：聚焦时记下前态，仅在首次真正修改时入栈（避免空操作污染历史）
+let editSnap = null;
+function flushEditSnap() {
+  if (editSnap === null) return;
+  undoStack.push(editSnap);
+  if (undoStack.length > HMAX) undoStack.shift();
+  redoStack.length = 0;
+  editSnap = null;
+}
 $("#props").addEventListener("focusin", (e) => {
-  if (e.target.matches("input, textarea, select")) snapshot();
+  if (e.target.matches("input, textarea, select")) editSnap = JSON.stringify(project);
 });
+$("#props").addEventListener("input", flushEditSnap);
+$("#props").addEventListener("change", flushEditSnap);
 
 // ====================================================================
 // Misc / 杂项

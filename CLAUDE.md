@@ -5,6 +5,7 @@
 
 ## 铁则 / Iron rules
 - 所有记忆只保存在本文件夹内。All memory stays inside this folder.
+- **零依赖优先。Dependency policy:** 1) 能自写就自写；2) 必须用 OSS 时**贴入并固定版本**（vendoring，注明出处/版本/许可证）；3) **不运行时引用 CDN/动态加载**（破坏离线、CDN 故障、版本漂移、需 SRI）。保持"单文件·离线·永久可用"。
 - Git 版本管理，使用项目独立账户（非全局）。Per-project git account (not global):
   - `milky-sun` / `c21uhs016@gmail.com`
 - 项目语言：代码注释可中英；但 **UI 显示一律英文（不出现中文）**。
