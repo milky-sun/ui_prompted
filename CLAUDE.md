@@ -18,15 +18,21 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 - **渲染**: SVG。元素层 `#elLayer` / 备忘层 `#memoLayer`（可折叠）/ 选中层 `#overlay`。
 - **输出**: Markdown 容器 + XML 风结构（呼应项目名 easy-xml）+ Vibe Memos + Links；用 `<!-- [HOME:] -->` `<!-- [PAGE:] -->` 注释标记。
 - **元素注释 element note**: 每个元素可写 `note`，导出时作为紧邻该元素上方的 XML 注释行 `<!-- … -->`（AI 易读，且与元素强绑定）。区别于画面级的 Vibe Memo。
-- **弹窗关闭 modal close**: ✕ 按钮在 `#toolbar` 之外，需单独绑定（`[data-act=closemodal]`）；另支持 Esc 与点击背景关闭。
-- **保存**: localStorage 自动保存/自动加载；JSON 文件 Import/Export 用于备份迁移。
-- **画布尺寸**: 360×720（近似 Android 屏）。
+- **视图模式 view modes**: `mode = visual | code | preview`，由 `body.mode-*` class 控制可见性；废弃了原 Markdown 弹窗。
+- **Code 视图**: 可编辑的 Markdown+XML，`buildMarkdown()` 生成、`parseMarkdown()` 解析回模型（双向）。"应用 Apply" 显式回写；解析失败则留在 code 模式并 toast 报错。
+- **语法高亮 highlighter**: 自写 `highlightCode()`，透明 textarea 叠在高亮 `<pre>` 上。注释先用 `~~CMT{i}~~` 占位再还原。**注意**：不要用 `\x00`/控制字符当占位符——会让文件变成二进制、破坏 grep（曾踩坑）。
+- **画面尺寸 canvas size**: 每页独立 `canvasW/canvasH`，预设见 `CANVAS_PRESETS`，与 `<screen width height>` 联动。
+- **页面嵌套 include**: `include` 元素引用其他页面，画布上画 1 层缩放快照（`drawShapes` 的 `depth<1` 守卫，不递归）。`wouldRecurse()` 防环。
+- **拍平 flatten**: `flattenInclude()` 把 include 按算好的坐标"复制粘贴"成普通元素（类似 group 粘贴）。一次性、不联动、用 visited 集防环——**绝对安全**，比实时递归嵌套稳。
+- **保存**: localStorage 自动保存/自动加载；JSON 文件 Import/Export 用于备份迁移。`migrate()` 兼容旧数据。
 
 ## 数据结构 / Data model
 ```
-project = { pages:[ { id, name, isHome, elements:[ {id,type,x,y,w,h,text,note,color,opacity,linkTo} ], memos:[ {id,x,y,w,h,text} ] } ], activePageId, seq }
+project = { pages:[ { id, name, isHome, canvasW, canvasH,
+  elements:[ {id,type,x,y,w,h,text,note,color,opacity,linkTo,ref} ],
+  memos:[ {id,x,y,w,h,text} ] } ], activePageId, seq }
 ```
-- 元素类型 element types: `rect` | `textfield` | `button` | `list`
+- 元素类型 element types: `rect` | `textfield` | `button` | `list` | `include`（`ref`=被嵌入页面 id）
 - localStorage key: `easy-xml-project-v1`
 
 ## 待办 / TODO（候选）

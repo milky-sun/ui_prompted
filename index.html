@@ -72,7 +72,13 @@
   .tool.draw:active { cursor: grabbing; }
   .tool.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .tool.vibe { background: #4a431f; border-color: var(--accent-2); color: var(--accent-2); }
-  .tool.active { outline: 2px solid var(--accent); }
+  .tool.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #toolbar select, #toolbar input.num {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 6px; font-size: 12px;
+  }
+  #toolbar input.num { width: 54px; }
   input[type=color] { width: 30px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: none; padding: 0; cursor: pointer; }
   input[type=range] { width: 80px; }
   /* ---- Main layout / 主布局 ---- */
@@ -122,6 +128,7 @@
     border-radius: 28px;
     padding: 12px;
     box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    height: fit-content;
   }
   svg#canvas { background: #fafafa; border-radius: 16px; display: block; }
   /* Properties / 属性面板 */
@@ -157,19 +164,45 @@
   .sel-outline { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
   .resize-handle { fill: var(--accent); cursor: nwse-resize; }
   .memo-card { cursor: move; }
-  /* Modal / 弹窗 */
-  #modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 100; }
-  #modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: 720px; max-width: 92vw; max-height: 86vh; display: flex; flex-direction: column; }
-  #modal header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-  #modal header h2 { margin: 0; font-size: 15px; }
-  #modal .body { padding: 16px; overflow: auto; }
-  #modal textarea { width: 100%; height: 50vh; background: #15161b; color: #d7dbe2; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5; }
-  #modal footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+  /* ---- Code view / 代码视图 ---- */
+  #codeView { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  .code-toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    background: var(--panel); font-size: 12px; color: var(--muted);
+  }
+  .code-toolbar .spacer { flex: 1; }
+  .code-wrap { position: relative; flex: 1; min-height: 0; margin: 10px; }
+  #codeHl, #codeArea {
+    position: absolute; inset: 0; margin: 0; padding: 14px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; line-height: 1.55;
+    white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word;
+    border: 1px solid var(--border); border-radius: 8px;
+    overflow: auto; tab-size: 2;
+  }
+  #codeHl { background: #15161b; color: #d7dbe2; pointer-events: none; z-index: 1; }
+  #codeHl code { font: inherit; white-space: inherit; }
+  #codeArea { background: transparent; color: transparent; caret-color: #fff; z-index: 2; resize: none; }
+  #codeArea::selection { background: rgba(91,157,255,.35); }
+  /* syntax tokens / 语法着色 */
+  .c  { color: #6a9955; font-style: italic; }
+  .tg { color: #569cd6; }
+  .at { color: #9cdcfe; }
+  .vl { color: #ce9178; }
+  .pu { color: #808080; }
+  .hd { color: #e6c07b; font-weight: 600; }
+  .fn { color: #707070; }
+  /* mode visibility / 模式可见性 */
+  body.mode-code #stage, body.mode-code #props { display: none; }
+  body.mode-code #codeView { display: flex; }
+  body.mode-preview #props { display: none; }
+  /* toast */
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
 </style>
 </head>
-<body>
+<body class="mode-visual">
 
 <!-- ======== Toolbar / 工具栏 ======== -->
 <div id="toolbar">
@@ -178,7 +211,13 @@
     <button class="tool" data-act="newpage">＋ 新页 New</button>
     <button class="tool" data-act="import">导入 Import</button>
     <button class="tool" data-act="export">导出 Export</button>
-    <button class="tool primary" data-act="markdown">⤴ Markdown</button>
+  </div>
+
+  <div class="group">
+    <span class="group-label">视图 View</span>
+    <button class="tool" data-act="view" data-mode="visual">🎨 设计 Visual</button>
+    <button class="tool" data-act="view" data-mode="code">{ } 代码 Code</button>
+    <button class="tool" data-act="view" data-mode="preview">▶ 预览 Preview</button>
   </div>
 
   <div class="group">
@@ -187,6 +226,7 @@
     <div class="tool draw" draggable="true" data-type="textfield">▭ 输入 Textfield</div>
     <div class="tool draw" draggable="true" data-type="button">▢ 按钮 Button</div>
     <div class="tool draw" draggable="true" data-type="list">☰ 列表 List</div>
+    <div class="tool draw" draggable="true" data-type="include" title="把另一页面作为元素嵌入 / Embed another page as an element">📦 嵌入 Include</div>
   </div>
 
   <div class="group">
@@ -196,15 +236,18 @@
   </div>
 
   <div class="group">
+    <span class="group-label">画面 Canvas</span>
+    <select id="canvasPreset" title="预设尺寸 / Preset size"></select>
+    <input type="number" id="canvasW" class="num" min="120" max="2000" title="宽 Width">
+    <span style="color:var(--muted)">×</span>
+    <input type="number" id="canvasH" class="num" min="120" max="4000" title="高 Height">
+  </div>
+
+  <div class="group">
     <span class="group-label">注释 Annotate</span>
     <div class="tool vibe draw" draggable="true" data-type="memo">💭 Vibe Memo</div>
     <button class="tool" data-act="link">🔗 Link</button>
     <button class="tool" id="toggleMemo" data-act="foldmemo">👁 折叠备忘 Memos</button>
-  </div>
-
-  <div class="group">
-    <span class="group-label">模式 Mode</span>
-    <button class="tool" id="previewBtn" data-act="preview">▶ 预览 Preview</button>
   </div>
 </div>
 
@@ -227,36 +270,30 @@
     </div>
   </div>
 
+  <!-- Code editor / 代码编辑器 -->
+  <div id="codeView">
+    <div class="code-toolbar">
+      <span>Markdown + XML（可编辑 / editable）</span>
+      <span class="spacer"></span>
+      <button class="tool primary" id="cApply">✓ 应用到设计 Apply</button>
+      <button class="tool" id="cRegen">↻ 从设计重生成 Regenerate</button>
+      <button class="tool" id="cCopy">📋 复制 Copy</button>
+      <button class="tool" id="cDownload">⬇ 下载 .md</button>
+    </div>
+    <div class="code-wrap">
+      <pre id="codeHl" aria-hidden="true"><code></code></pre>
+      <textarea id="codeArea" spellcheck="false"></textarea>
+    </div>
+  </div>
+
   <!-- Properties / 属性面板 -->
   <div id="props">
     <h3>属性 Properties</h3>
-    <div id="propBody">
-      <p class="empty-hint">
-        从工具栏拖拽元素到画布。<br>
-        Drag elements from the toolbar onto the canvas.<br><br>
-        选中元素后在此编辑。<br>
-        Select an element to edit it here.
-      </p>
-    </div>
-  </div>
-</div>
-
-<!-- ======== Modal / 弹窗 ======== -->
-<div id="modal-bg">
-  <div id="modal">
-    <header>
-      <h2 id="modalTitle">Markdown</h2>
-      <button class="tool" data-act="closemodal">✕</button>
-    </header>
-    <div class="body">
-      <textarea id="modalText" spellcheck="false"></textarea>
-    </div>
-    <footer id="modalFooter"></footer>
+    <div id="propBody"></div>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
-
 <input type="file" id="fileInput" accept=".json,application/json" style="display:none">
 
 <script>
@@ -272,13 +309,24 @@ const DEFAULTS = {
   textfield: { w: 240, h: 46,  text: "Input..." },
   button:    { w: 140, h: 46,  text: "Button" },
   list:      { w: 260, h: 220, text: "Item" },
+  include:   { w: 170, h: 130, text: "" },
 };
 
-let project = null;   // { pages: [...], activePageId, seq }
+// Canvas presets / 画面预设
+const CANVAS_PRESETS = [
+  { label: "Phone 360×720",   w: 360,  h: 720 },
+  { label: "Phone 360×800",   w: 360,  h: 800 },
+  { label: "Phone L 412×915", w: 412,  h: 915 },
+  { label: "Compact 320×568", w: 320,  h: 568 },
+  { label: "Tablet 800×1280", w: 800,  h: 1280 },
+];
+
+let project = null;        // { pages, activePageId, seq }
 let selectedId = null;
-let selectedKind = null; // 'el' | 'memo'
+let selectedKind = null;   // 'el' | 'memo'
 let memoVisible = true;
-let previewMode = false;
+let mode = "visual";       // 'visual' | 'code' | 'preview'
+let codeDirty = false;     // code edited but not applied / 代码已改未应用
 
 const SVGNS = "http://www.w3.org/2000/svg";
 const $ = (sel) => document.querySelector(sel);
@@ -308,6 +356,9 @@ function load() {
 function activePage() {
   return project.pages.find(p => p.id === project.activePageId) || project.pages[0];
 }
+// active canvas size / 当前画面尺寸
+function cw() { const p = activePage(); return (p && p.canvasW) || 360; }
+function ch() { const p = activePage(); return (p && p.canvasH) || 720; }
 
 // ---- Init / 初始化 ----
 function freshProject() {
@@ -317,9 +368,24 @@ function freshProject() {
   project.activePageId = p.id;
 }
 function createPage(name) {
-  const p = { id: nextId("p"), name: name || ("Page " + (project.pages.length + 1)), isHome: false, elements: [], memos: [] };
+  const p = {
+    id: nextId("p"),
+    name: name || ("Page " + (project.pages.length + 1)),
+    isHome: false, elements: [], memos: [],
+    canvasW: 360, canvasH: 720,
+  };
   project.pages.push(p);
   return p;
+}
+// fill defaults for old data / 兼容旧数据
+function migrate() {
+  if (!project.pages) return;
+  project.pages.forEach(p => {
+    if (!p.canvasW) p.canvasW = 360;
+    if (!p.canvasH) p.canvasH = 720;
+    if (!p.memos) p.memos = [];
+    (p.elements || []).forEach(e => { if (e.note == null) e.note = ""; if (e.ref === undefined) e.ref = null; });
+  });
 }
 
 // ====================================================================
@@ -329,7 +395,16 @@ function render() {
   renderPageList();
   renderCanvas();
   renderProps();
+  syncCanvasControls();
   save();
+}
+
+function syncCanvasControls() {
+  const p = activePage();
+  $("#canvasW").value = p.canvasW;
+  $("#canvasH").value = p.canvasH;
+  const preset = CANVAS_PRESETS.findIndex(x => x.w === p.canvasW && x.h === p.canvasH);
+  $("#canvasPreset").value = preset >= 0 ? String(preset) : "custom";
 }
 
 function renderPageList() {
@@ -341,7 +416,7 @@ function renderPageList() {
     div.innerHTML =
       `<span class="home-dot">${p.isHome ? "★" : ""}</span>` +
       `<span class="name">${escapeHtml(p.name)}</span>` +
-      `<span class="pgmenu" data-pgact="menu" title="操作 Menu">⋯</span>`;
+      `<span class="pgmenu" title="操作 Menu">⋯</span>`;
     div.querySelector(".name").onclick = () => { project.activePageId = p.id; selectedId = null; render(); };
     div.querySelector(".home-dot").onclick = () => { project.activePageId = p.id; selectedId = null; render(); };
     div.querySelector(".pgmenu").onclick = (e) => { e.stopPropagation(); pageMenu(p); };
@@ -368,8 +443,11 @@ function pageMenu(p) {
     if (project.pages.length === 1) { toast("至少保留一个页面 / Keep at least one page"); return; }
     if (confirm(`删除 "${p.name}"? / Delete?`)) {
       project.pages = project.pages.filter(x => x.id !== p.id);
-      // clear links pointing here / 清除指向该页的链接
-      project.pages.forEach(pg => pg.elements.forEach(el => { if (el.linkTo === p.id) el.linkTo = null; }));
+      // clear links / includes pointing here / 清除指向该页的链接与嵌入
+      project.pages.forEach(pg => pg.elements.forEach(el => {
+        if (el.linkTo === p.id) el.linkTo = null;
+        if (el.ref === p.id) el.ref = null;
+      }));
       if (project.activePageId === p.id) project.activePageId = project.pages[0].id;
       if (!project.pages.some(x => x.isHome)) project.pages[0].isHome = true;
       render();
@@ -379,30 +457,58 @@ function pageMenu(p) {
 
 function renderCanvas() {
   const page = activePage();
+  const W = cw(), H = ch();
+  canvas.setAttribute("width", W);
+  canvas.setAttribute("height", H);
+  canvas.setAttribute("viewBox", `0 0 ${W} ${H}`);
+
   elLayer.innerHTML = "";
   memoLayer.innerHTML = "";
   overlay.innerHTML = "";
 
-  // Elements / 元素
   page.elements.forEach(el => elLayer.appendChild(buildElement(el)));
-  // Memos / 备忘 (separate layer, foldable)
   memoLayer.style.display = memoVisible ? "" : "none";
   page.memos.forEach(m => memoLayer.appendChild(buildMemo(m)));
 
-  // Selection overlay / 选中框
-  if (selectedId && !previewMode) {
+  if (selectedId && mode !== "preview") {
     const obj = findSelected();
     if (obj) drawSelection(obj.x, obj.y, obj.w || 200, obj.h || 80);
   }
 }
 
+// build a top-level (interactive) element / 构建可交互的顶层元素
 function buildElement(el) {
   const g = document.createElementNS(SVGNS, "g");
-  g.setAttribute("class", "el" + (previewMode && el.linkTo ? " preview-link" : ""));
+  g.setAttribute("class", "el" + (mode === "preview" && el.linkTo ? " preview-link" : ""));
   g.setAttribute("transform", `translate(${el.x},${el.y})`);
   g.dataset.id = el.id;
   g.dataset.kind = "el";
+  drawShapes(g, el, 0);
 
+  // note badge / 注释标记
+  if (el.note && el.note.trim()) {
+    const n = document.createElementNS(SVGNS, "text");
+    n.setAttribute("x", 5); n.setAttribute("y", 15);
+    n.setAttribute("font-size", "12"); n.setAttribute("fill", "#caa53a");
+    n.textContent = "📝";
+    const ttl = document.createElementNS(SVGNS, "title");
+    ttl.textContent = el.note; n.appendChild(ttl);
+    g.appendChild(n);
+  }
+  // link badge / 链接标记
+  if (el.linkTo) {
+    const t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("x", el.w - 6); t.setAttribute("y", 16);
+    t.setAttribute("text-anchor", "end"); t.setAttribute("font-size", "12");
+    t.setAttribute("fill", "#5b9dff"); t.textContent = "🔗";
+    g.appendChild(t);
+  }
+  return g;
+}
+
+// draw the shapes for an element into a group (local coords, no events)
+// 把元素的形状画进一个分组（局部坐标，无事件）。depth 用于限制 include 递归。
+function drawShapes(g, el, depth) {
   const stroke = "#3a3d47";
   const op = el.opacity != null ? el.opacity : 1;
 
@@ -417,47 +523,45 @@ function buildElement(el) {
   } else if (el.type === "list") {
     rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
     const rows = Math.max(2, Math.floor(el.h / 44));
-    for (let i = 1; i < rows; i++) {
-      const ly = i * (el.h / rows);
-      line(g, 0, ly, el.w, ly, "#e3e3e3");
-    }
+    for (let i = 1; i < rows; i++) { const ly = i * (el.h / rows); line(g, 0, ly, el.w, ly, "#e3e3e3"); }
     for (let i = 0; i < rows; i++) {
       const ly = i * (el.h / rows) + (el.h / rows) / 2 + 4;
       label(g, 14, ly, (el.text || "Item") + " " + (i + 1), "#4a4f59", 13, "start");
     }
+  } else if (el.type === "include") {
+    rect(g, 0, 0, el.w, el.h, "#eef2ff", op, "#5b9dff", 8);
+    const ref = el.ref ? project.pages.find(p => p.id === el.ref) : null;
+    label(g, 6, 14, "📦 " + (ref ? ref.name : "(未指定 page)"), "#3a6dd0", 11, "start", 600);
+    if (ref && depth < 1) {
+      // scaled snapshot of the referenced page / 引用页面的缩放快照
+      const pad = 4, top = 18;
+      const sc = Math.min((el.w - pad * 2) / (ref.canvasW || 360), (el.h - top - pad) / (ref.canvasH || 720));
+      const inner = document.createElementNS(SVGNS, "g");
+      inner.setAttribute("transform", `translate(${pad},${top}) scale(${sc})`);
+      inner.setAttribute("pointer-events", "none");
+      const bg = document.createElementNS(SVGNS, "rect");
+      bg.setAttribute("width", ref.canvasW || 360); bg.setAttribute("height", ref.canvasH || 720);
+      bg.setAttribute("fill", "#fafafa"); inner.appendChild(bg);
+      (ref.elements || []).forEach(ce => {
+        const cg = document.createElementNS(SVGNS, "g");
+        cg.setAttribute("transform", `translate(${ce.x},${ce.y})`);
+        drawShapes(cg, ce, depth + 1); // depth+1 → nested includes won't expand
+        inner.appendChild(cg);
+      });
+      g.appendChild(inner);
+    } else if (ref) {
+      label(g, el.w / 2, el.h / 2 + 10, "(嵌套折叠 nested)", "#9aa0ad", 10, "middle");
+    }
   }
-
-  // note badge / 注释标记
-  if (el.note && el.note.trim()) {
-    const n = document.createElementNS(SVGNS, "text");
-    n.setAttribute("x", 5); n.setAttribute("y", 15);
-    n.setAttribute("font-size", "12"); n.setAttribute("fill", "#caa53a");
-    n.textContent = "📝";
-    const ttl = document.createElementNS(SVGNS, "title");
-    ttl.textContent = el.note;
-    n.appendChild(ttl);
-    g.appendChild(n);
-  }
-  // link badge / 链接标记
-  if (el.linkTo) {
-    const t = document.createElementNS(SVGNS, "text");
-    t.setAttribute("x", el.w - 6); t.setAttribute("y", 16);
-    t.setAttribute("text-anchor", "end"); t.setAttribute("font-size", "12");
-    t.setAttribute("fill", "#5b9dff"); t.textContent = "🔗";
-    g.appendChild(t);
-  }
-  return g;
 }
 
 function buildMemo(m) {
   const g = document.createElementNS(SVGNS, "g");
   g.setAttribute("class", "memo-card");
   g.setAttribute("transform", `translate(${m.x},${m.y})`);
-  g.dataset.id = m.id;
-  g.dataset.kind = "memo";
+  g.dataset.id = m.id; g.dataset.kind = "memo";
   const w = m.w || 180, h = m.h || 70;
   rect(g, 0, 0, w, h, "#fff4c2", 0.96, "#d9b94a", 6);
-  // dog-ear / 折角
   const corner = document.createElementNS(SVGNS, "path");
   corner.setAttribute("d", `M${w-14},0 L${w},14 L${w-14},14 Z`);
   corner.setAttribute("fill", "#e0c45a");
@@ -544,12 +648,9 @@ function findSelected() {
 function renderProps() {
   const body = $("#propBody");
   const obj = findSelected();
-  if (!obj) {
-    body.innerHTML =
-      `<p class="empty-hint">从工具栏拖拽元素到画布。<br>Drag elements from the toolbar onto the canvas.<br><br>` +
-      `选中元素后在此编辑。<br>Select an element to edit it here.</p>`;
-    return;
-  }
+
+  if (!obj) { renderCanvasProps(body); return; }
+
   if (selectedKind === "memo") {
     body.innerHTML =
       `<div class="field"><label>Vibe Memo (给 AI 的描述 / note for AI)</label>` +
@@ -559,40 +660,84 @@ function renderProps() {
     $("#pDelete").onclick = deleteSelected;
     return;
   }
-  // element / 元素
-  const pageOptions = project.pages
-    .filter(p => p.id !== activePage().id)
-    .map(p => `<option value="${p.id}" ${obj.linkTo === p.id ? "selected" : ""}>${escapeHtml(p.name)}</option>`)
-    .join("");
-  body.innerHTML =
-    `<div class="field"><label>类型 Type</label><div>${obj.type}</div></div>` +
-    `<div class="field"><label>文本 Text</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>` +
-    `<div class="field"><label>📝 注释 Note (给 AI 的说明 / description for AI)</label>` +
+
+  // ---- element / 元素 ----
+  const otherPages = project.pages.filter(p => p.id !== activePage().id);
+  const pageOpts = (selId) => otherPages
+    .map(p => `<option value="${p.id}" ${selId === p.id ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("");
+
+  let html = `<div class="field"><label>类型 Type</label><div>${obj.type}</div></div>`;
+
+  if (obj.type === "include") {
+    html += `<div class="field"><label>📦 嵌入页面 Embed page</label>` +
+      `<select id="pRef"><option value="">— 选择 Select —</option>${pageOpts(obj.ref)}</select></div>` +
+      `<button class="tool" id="pFlatten" style="width:100%;margin-bottom:12px">🧩 拍平为元素 Flatten to elements</button>`;
+  } else {
+    html += `<div class="field"><label>文本 Text</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>` +
+      `<div class="field row"><div><label>颜色 Color</label><input type="color" id="pColor" value="${obj.color || "#ffffff"}"></div>` +
+      `<div style="flex:1"><label>透明度 Opacity</label><input type="range" id="pOp" min="0" max="1" step="0.05" value="${obj.opacity != null ? obj.opacity : 1}"></div></div>`;
+  }
+
+  html += `<div class="field"><label>📝 注释 Note (给 AI 的说明 / description for AI)</label>` +
     `<textarea id="pNote" placeholder="例: 这是主登录按钮，点击后校验邮箱…">${escapeHtml(obj.note || "")}</textarea></div>` +
-    `<div class="field row"><div><label>颜色 Color</label><input type="color" id="pColor" value="${obj.color || "#ffffff"}"></div>` +
-    `<div style="flex:1"><label>透明度 Opacity</label><input type="range" id="pOp" min="0" max="1" step="0.05" value="${obj.opacity != null ? obj.opacity : 1}"></div></div>` +
     `<div class="field row">` +
     `<div><label>W</label><input type="text" id="pW" value="${Math.round(obj.w)}"></div>` +
     `<div><label>H</label><input type="text" id="pH" value="${Math.round(obj.h)}"></div>` +
     `<div><label>X</label><input type="text" id="pX" value="${Math.round(obj.x)}"></div>` +
-    `<div><label>Y</label><input type="text" id="pY" value="${Math.round(obj.y)}"></div></div>` +
-    `<div class="field"><label>🔗 链接到 Link to page</label>` +
-    `<select id="pLink"><option value="">— 无 None —</option>${pageOptions}</select></div>` +
-    `<button class="btn-danger" id="pDelete">删除 Delete</button>`;
+    `<div><label>Y</label><input type="text" id="pY" value="${Math.round(obj.y)}"></div></div>`;
 
-  $("#pText").oninput = (e) => { obj.text = e.target.value; renderCanvas(); save(); };
+  if (obj.type !== "include") {
+    html += `<div class="field"><label>🔗 链接到 Link to page</label>` +
+      `<select id="pLink"><option value="">— 无 None —</option>${pageOpts(obj.linkTo)}</select></div>`;
+  }
+  html += `<button class="btn-danger" id="pDelete">删除 Delete</button>`;
+  body.innerHTML = html;
+
+  if (obj.type === "include") {
+    $("#pRef").onchange = (e) => {
+      const v = e.target.value;
+      if (v && wouldRecurse(obj, v)) { toast("不能嵌入会造成循环的页面 / Would create a cycle"); e.target.value = obj.ref || ""; return; }
+      obj.ref = v || null; renderCanvas(); save();
+    };
+    $("#pFlatten").onclick = () => flattenInclude(obj);
+  } else {
+    $("#pText").oninput = (e) => { obj.text = e.target.value; renderCanvas(); save(); };
+    $("#pColor").oninput = (e) => { obj.color = e.target.value; renderCanvas(); save(); };
+    $("#pOp").oninput = (e) => { obj.opacity = parseFloat(e.target.value); renderCanvas(); save(); };
+    $("#pLink").onchange = (e) => { obj.linkTo = e.target.value || null; renderCanvas(); save(); };
+  }
   $("#pNote").oninput = (e) => { obj.note = e.target.value; renderCanvas(); save(); };
-  $("#pColor").oninput = (e) => { obj.color = e.target.value; renderCanvas(); save(); };
-  $("#pOp").oninput = (e) => { obj.opacity = parseFloat(e.target.value); renderCanvas(); save(); };
   ["W","H","X","Y"].forEach(k => {
-    const inp = $("#p" + k);
-    inp.onchange = (e) => {
+    $("#p" + k).onchange = (e) => {
       const v = parseFloat(e.target.value);
       if (!isNaN(v)) { obj[k.toLowerCase()] = v; renderCanvas(); save(); }
     };
   });
-  $("#pLink").onchange = (e) => { obj.linkTo = e.target.value || null; renderCanvas(); save(); };
   $("#pDelete").onclick = deleteSelected;
+}
+
+// canvas-level properties shown when nothing selected / 未选中时显示画面属性
+function renderCanvasProps(body) {
+  const p = activePage();
+  body.innerHTML =
+    `<div class="field"><label>当前页面 Current page</label><div>${escapeHtml(p.name)}${p.isHome ? " ★" : ""}</div></div>` +
+    `<div class="field"><label>画面尺寸 Canvas size (dp)</label>` +
+    `<div class="row"><input type="text" id="cpW" value="${p.canvasW}"> × <input type="text" id="cpH" value="${p.canvasH}"></div></div>` +
+    `<p class="empty-hint">从工具栏拖拽元素到画布。<br>Drag elements from the toolbar onto the canvas.<br><br>` +
+    `选中元素后在此编辑。<br>Select an element to edit it.</p>`;
+  $("#cpW").onchange = (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(v, p.canvasH); };
+  $("#cpH").onchange = (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(p.canvasW, v); };
+}
+
+// detect include cycle / 检测 include 循环
+function wouldRecurse(includeEl, targetPageId, seen) {
+  seen = seen || new Set();
+  if (targetPageId === activePage().id) return true; // self
+  if (seen.has(targetPageId)) return true;
+  seen.add(targetPageId);
+  const tp = project.pages.find(p => p.id === targetPageId);
+  if (!tp) return false;
+  return (tp.elements || []).some(e => e.type === "include" && e.ref && wouldRecurse(includeEl, e.ref, seen));
 }
 
 function deleteSelected() {
@@ -603,16 +748,61 @@ function deleteSelected() {
   render();
 }
 
+// Flatten an include into copied primitive elements with computed coordinates.
+// 把 include 焊接成带"算好坐标"的普通元素副本（类似 group 粘贴）。一次性、不再联动，绝对安全。
+function flattenInclude(el) {
+  const ref = el.ref && project.pages.find(p => p.id === el.ref);
+  if (!ref) { toast("先选择嵌入页面 / Pick a page to embed first"); return; }
+  const added = [];
+  const visited = new Set();           // 防循环 / cycle guard
+  function bake(srcPage, ox, oy, sc, depth) {
+    if (!srcPage || depth > 8) return;
+    (srcPage.elements || []).forEach(e => {
+      if (e.type === "include") {       // resolve nested include recursively / 递归展开嵌套
+        const rp = e.ref && project.pages.find(p => p.id === e.ref);
+        if (rp && !visited.has(rp.id)) {
+          visited.add(rp.id);
+          const isc = sc * Math.min(e.w / (rp.canvasW || 360), e.h / (rp.canvasH || 720));
+          bake(rp, ox + e.x * sc, oy + e.y * sc, isc, depth + 1);
+          visited.delete(rp.id);
+        }
+        return;
+      }
+      added.push({
+        id: nextId("e"), type: e.type,
+        x: ox + e.x * sc, y: oy + e.y * sc, w: e.w * sc, h: e.h * sc,
+        text: e.text || "", note: e.note || "",
+        color: e.color || "#ffffff", opacity: e.opacity != null ? e.opacity : 1,
+        linkTo: e.linkTo || null, ref: null,
+      });
+    });
+  }
+  const sc = Math.min(el.w / (ref.canvasW || 360), el.h / (ref.canvasH || 720));
+  visited.add(ref.id);
+  bake(ref, el.x, el.y, sc, 0);
+  const page = activePage();
+  page.elements = page.elements.filter(x => x.id !== el.id).concat(added);
+  selectedId = null; selectedKind = null;
+  render();
+  toast(`已拍平为 ${added.length} 个元素 / Flattened into ${added.length} elements`);
+}
+
+function applyCanvasSize(w, h) {
+  const p = activePage();
+  p.canvasW = clamp(w, 120, 4000);
+  p.canvasH = clamp(h, 120, 4000);
+  render();
+}
+
 // ====================================================================
 // Interaction: drag from toolbar / 从工具栏拖拽
 // ====================================================================
 document.querySelectorAll(".tool.draw").forEach(t => {
-  t.addEventListener("dragstart", (e) => {
-    e.dataTransfer.setData("text/plain", t.dataset.type);
-  });
+  t.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/plain", t.dataset.type));
 });
-canvas.addEventListener("dragover", (e) => e.preventDefault());
+canvas.addEventListener("dragover", (e) => { if (mode === "visual") e.preventDefault(); });
 canvas.addEventListener("drop", (e) => {
+  if (mode !== "visual") return;
   e.preventDefault();
   const type = e.dataTransfer.getData("text/plain");
   if (!type) return;
@@ -626,22 +816,22 @@ function addElement(type, x, y) {
   if (!d) return;
   const el = {
     id: nextId("e"), type,
-    x: clamp(x - d.w / 2, 0, 360 - d.w),
-    y: clamp(y - d.h / 2, 0, 720 - d.h),
+    x: clamp(x - d.w / 2, 0, cw() - d.w),
+    y: clamp(y - d.h / 2, 0, ch() - d.h),
     w: d.w, h: d.h,
-    text: d.text,
-    note: "",
+    text: d.text, note: "",
     color: $("#fillColor").value,
     opacity: parseFloat($("#opacity").value),
-    linkTo: null,
+    linkTo: null, ref: null,
   };
   activePage().elements.push(el);
   selectedId = el.id; selectedKind = "el";
   render();
+  if (type === "include") toast("在右侧选择要嵌入的页面 / Pick a page to embed →");
 }
 
 function addMemo(x, y) {
-  const m = { id: nextId("m"), x: clamp(x - 90, 0, 360 - 180), y: clamp(y - 35, 0, 720 - 70), w: 180, h: 70, text: "" };
+  const m = { id: nextId("m"), x: clamp(x - 90, 0, cw() - 180), y: clamp(y - 35, 0, ch() - 70), w: 180, h: 70, text: "" };
   activePage().memos.push(m);
   selectedId = m.id; selectedKind = "memo";
   memoVisible = true;
@@ -651,10 +841,22 @@ function addMemo(x, y) {
 // ====================================================================
 // Interaction: move / resize on canvas / 画布上拖动与缩放
 // ====================================================================
-let drag = null; // { mode, id, kind, startX, startY, ox, oy, ow, oh }
+let drag = null;
 
 canvas.addEventListener("pointerdown", (e) => {
-  // resize handle / 缩放手柄
+  if (mode !== "visual") {
+    // preview: follow link / 预览模式跳转
+    if (mode === "preview") {
+      const g = e.target.closest(".el");
+      if (g) {
+        const el = activePage().elements.find(x => x.id === g.dataset.id);
+        if (el && el.linkTo && project.pages.some(p => p.id === el.linkTo)) {
+          project.activePageId = el.linkTo; selectedId = null; render();
+        }
+      }
+    }
+    return;
+  }
   if (e.target.dataset && e.target.dataset.handle === "resize") {
     const obj = findSelected();
     if (!obj) return;
@@ -663,25 +865,8 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   const g = e.target.closest(".el, .memo-card");
-  if (!g) {
-    // click empty / 点击空白 → 取消选择
-    selectedId = null; selectedKind = null; renderCanvas(); renderProps();
-    return;
-  }
-  const id = g.dataset.id, kind = g.dataset.kind;
-
-  // preview mode: follow link / 预览模式跳转
-  if (previewMode) {
-    if (kind === "el") {
-      const el = activePage().elements.find(x => x.id === id);
-      if (el && el.linkTo && project.pages.some(p => p.id === el.linkTo)) {
-        project.activePageId = el.linkTo; selectedId = null; render();
-      }
-    }
-    return;
-  }
-
-  selectedId = id; selectedKind = kind;
+  if (!g) { selectedId = null; selectedKind = null; renderCanvas(); renderProps(); return; }
+  selectedId = g.dataset.id; selectedKind = g.dataset.kind;
   const obj = findSelected();
   drag = { mode: "move", obj, startX: e.clientX, startY: e.clientY, ox: obj.x, oy: obj.y };
   canvas.setPointerCapture(e.pointerId);
@@ -690,27 +875,23 @@ canvas.addEventListener("pointerdown", (e) => {
 
 canvas.addEventListener("pointermove", (e) => {
   if (!drag) return;
-  const scale = canvas.getBoundingClientRect().width / 360; // px → svg unit
+  const scale = canvas.getBoundingClientRect().width / cw();
   const dx = (e.clientX - drag.startX) / scale;
   const dy = (e.clientY - drag.startY) / scale;
   if (drag.mode === "move") {
-    drag.obj.x = clamp(drag.ox + dx, 0, 360 - (drag.obj.w || 180));
-    drag.obj.y = clamp(drag.oy + dy, 0, 720 - (drag.obj.h || 70));
+    drag.obj.x = clamp(drag.ox + dx, 0, cw() - (drag.obj.w || 180));
+    drag.obj.y = clamp(drag.oy + dy, 0, ch() - (drag.obj.h || 70));
   } else if (drag.mode === "resize") {
-    drag.obj.w = clamp(drag.ow + dx, 24, 360 - drag.obj.x);
-    drag.obj.h = clamp(drag.oh + dy, 20, 720 - drag.obj.y);
+    drag.obj.w = clamp(drag.ow + dx, 24, cw() - drag.obj.x);
+    drag.obj.h = clamp(drag.oh + dy, 20, ch() - drag.obj.y);
   }
   renderCanvas();
 });
+canvas.addEventListener("pointerup", () => { if (drag) { drag = null; renderProps(); save(); } });
 
-canvas.addEventListener("pointerup", (e) => {
-  if (drag) { drag = null; renderProps(); save(); }
-});
-
-// ---- coordinate conversion / 坐标转换 ----
 function clientToSvg(cx, cy) {
   const r = canvas.getBoundingClientRect();
-  const scale = r.width / 360;
+  const scale = r.width / cw();
   return { x: (cx - r.left) / scale, y: (cy - r.top) / scale };
 }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -718,7 +899,7 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 // ====================================================================
 // Toolbar actions / 工具栏动作
 // ====================================================================
-document.getElementById("toolbar").addEventListener("click", (e) => {
+$("#toolbar").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-act]");
   if (!btn) return;
   const act = btn.dataset.act;
@@ -729,44 +910,54 @@ document.getElementById("toolbar").addEventListener("click", (e) => {
     exportJSON();
   } else if (act === "import") {
     $("#fileInput").click();
-  } else if (act === "markdown") {
-    showMarkdown();
+  } else if (act === "view") {
+    setMode(btn.dataset.mode);
   } else if (act === "link") {
-    if (selectedKind === "el" && selectedId) { toast("在右侧面板选择目标页面 / Pick target page in the panel →"); $("#pLink") && $("#pLink").focus(); }
+    if (selectedKind === "el" && selectedId) { toast("在右侧面板选择目标页面 / Pick target page in the panel →"); const s = $("#pLink"); if (s) s.focus(); }
     else toast("先选中一个元素 / Select an element first");
   } else if (act === "foldmemo") {
     memoVisible = !memoVisible;
     $("#toggleMemo").classList.toggle("active", !memoVisible);
     renderCanvas();
-  } else if (act === "preview") {
-    previewMode = !previewMode;
-    $("#previewBtn").classList.toggle("active", previewMode);
-    $("#previewBtn").textContent = previewMode ? "■ 编辑 Edit" : "▶ 预览 Preview";
-    selectedId = null;
-    render();
-    toast(previewMode ? "预览模式：点击带🔗的元素跳转 / Preview: click 🔗 elements to jump" : "编辑模式 / Edit mode");
   }
 });
 
-// ---- close modal / 关闭弹窗 (button is outside #toolbar, bind separately) ----
-function closeModal() { $("#modal-bg").style.display = "none"; }
-document.querySelectorAll('[data-act="closemodal"]').forEach(b => b.addEventListener("click", closeModal));
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
-
-// ---- delete key / 删除键 ----
-document.addEventListener("keydown", (e) => {
-  if ((e.key === "Delete" || e.key === "Backspace") && selectedId && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
-    e.preventDefault();
-    deleteSelected();
-  }
+// canvas size controls / 画面尺寸控件
+function buildCanvasPresets() {
+  const sel = $("#canvasPreset");
+  sel.innerHTML = CANVAS_PRESETS.map((p, i) => `<option value="${i}">${p.label}</option>`).join("") +
+    `<option value="custom">自定义 Custom</option>`;
+}
+$("#canvasPreset").addEventListener("change", (e) => {
+  const v = e.target.value;
+  if (v === "custom") return;
+  const p = CANVAS_PRESETS[+v];
+  if (p) applyCanvasSize(p.w, p.h);
 });
+$("#canvasW").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(v, activePage().canvasH); });
+$("#canvasH").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(activePage().canvasW, v); });
+
+// ---- view mode switch / 视图切换 ----
+function setMode(m) {
+  if (mode === "code" && m !== "code" && codeDirty) {
+    if (confirm("代码有未应用的修改。应用到设计？\nUnapplied code edits. Apply to design?\n（取消 = 丢弃 / Cancel = discard）")) {
+      if (!applyCode()) return; // parse failed → stay in code
+    } else { codeDirty = false; }
+  }
+  mode = m;
+  document.body.className = "mode-" + m;
+  document.querySelectorAll('[data-act="view"]').forEach(b => b.classList.toggle("active", b.dataset.mode === m));
+  selectedId = null;
+  if (m === "code") renderCode();
+  render();
+  if (m === "preview") toast("预览：点击带🔗的元素跳转 / Preview: click 🔗 elements to jump");
+}
 
 // ====================================================================
 // Import / Export JSON / 导入导出
 // ====================================================================
 function exportJSON() {
-  const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
-  download(blob, "easy-xml-project.json");
+  download(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), "easy-xml-project.json");
   toast("已导出 JSON / Exported JSON");
 }
 $("#fileInput").addEventListener("change", (e) => {
@@ -777,10 +968,9 @@ $("#fileInput").addEventListener("change", (e) => {
     try {
       const data = JSON.parse(reader.result);
       if (!data.pages || !Array.isArray(data.pages)) throw new Error("invalid");
-      project = data;
+      project = data; migrate();
       if (!project.activePageId) project.activePageId = project.pages[0].id;
-      selectedId = null;
-      render();
+      selectedId = null; render();
       toast("已导入 / Imported");
     } catch (err) { toast("导入失败 / Import failed"); }
   };
@@ -796,7 +986,7 @@ function download(blob, filename) {
 }
 
 // ====================================================================
-// Markdown export / 导出 Markdown (AI prompt)
+// Markdown <-> model / Markdown 与模型互转
 // ====================================================================
 function pageNameById(id) { const p = project.pages.find(x => x.id === id); return p ? p.name : "?"; }
 function esc(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;"); }
@@ -815,18 +1005,19 @@ function buildMarkdown() {
     md += `<!-- [PAGE: ${p.name}] -->\n`;
     md += `## ${p.name}${p.isHome ? " (Home)" : ""}\n\n`;
     md += "```xml\n";
-    md += `<screen name="${esc(p.name)}"${p.isHome ? ' home="true"' : ""} width="360" height="720">\n`;
+    md += `<screen name="${esc(p.name)}"${p.isHome ? ' home="true"' : ""} width="${p.canvasW}" height="${p.canvasH}">\n`;
     p.elements.forEach(el => {
-      const attrs = [
-        `x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`,
-        `color="${el.color}"`, `opacity="${el.opacity != null ? el.opacity : 1}"`,
-      ];
-      if (el.text) attrs.push(`text="${esc(el.text)}"`);
-      if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
-      // per-element note as a comment line directly above (easy for AI to read)
-      // 每个元素的注释作为紧邻其上的注释行，便于 AI 阅读
       if (el.note && el.note.trim()) {
         md += `  <!-- ${el.note.replace(/\r?\n/g, " ").replace(/--+/g, "—").trim()} -->\n`;
+      }
+      let attrs;
+      if (el.type === "include") {
+        attrs = [`ref="${esc(pageNameById(el.ref))}"`, `x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`];
+      } else {
+        attrs = [`x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`,
+                 `color="${el.color}"`, `opacity="${el.opacity != null ? el.opacity : 1}"`];
+        if (el.text) attrs.push(`text="${esc(el.text)}"`);
+        if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
       }
       md += `  <${el.type} ${attrs.join(" ")}/>\n`;
     });
@@ -835,35 +1026,151 @@ function buildMarkdown() {
 
     if (p.memos.length) {
       md += `### 💭 Vibe Memos\n`;
-      p.memos.forEach(m => {
-        const t = (m.text || "").replace(/\n/g, " ").trim();
-        md += `- \`@(${r(m.x)},${r(m.y)})\` ${t || "(empty)"}\n`;
-      });
+      p.memos.forEach(m => { md += `- \`@(${r(m.x)},${r(m.y)})\` ${(m.text || "").replace(/\n/g, " ").trim() || "(empty)"}\n`; });
       md += "\n";
     }
     const links = p.elements.filter(e => e.linkTo);
     if (links.length) {
       md += `### 🔗 Links\n`;
-      links.forEach(e => {
-        md += `- **${e.type}**${e.text ? ` "${e.text}"` : ""} → **${pageNameById(e.linkTo)}**\n`;
-      });
+      links.forEach(e => { md += `- **${e.type}**${e.text ? ` "${e.text}"` : ""} → **${pageNameById(e.linkTo)}**\n`; });
       md += "\n";
     }
   });
   return md;
 }
 
-function showMarkdown() {
-  const md = buildMarkdown();
-  $("#modalTitle").textContent = "Markdown (AI Prompt)";
-  $("#modalText").value = md;
-  const footer = $("#modalFooter");
-  footer.innerHTML =
-    `<button class="tool" id="mCopy">📋 复制 Copy</button>` +
-    `<button class="tool primary" id="mDownload">⬇ 下载 Download .md</button>`;
-  $("#mCopy").onclick = () => { copyText(md); };
-  $("#mDownload").onclick = () => { download(new Blob([md], { type: "text/markdown" }), "android-ui.md"); toast("已下载 / Downloaded"); };
-  $("#modal-bg").style.display = "flex";
+// ---- parse Markdown back into the model / 将 Markdown 解析回模型 ----
+function parseMarkdown(md) {
+  const proj = { pages: [], activePageId: null, seq: 0 };
+  let n = 0;
+  const id = (pre) => pre + (++n);
+  const linkFix = [], refFix = [];
+
+  const homeM = md.match(/\[HOME:\s*([^\]]*)\]/);
+  const homeName = homeM ? homeM[1].trim() : null;
+
+  const parts = md.split(/^##\s+/m).slice(1);
+  if (!parts.length) throw new Error("未找到页面 (## 标题) / No pages (## headings) found");
+
+  parts.forEach(part => {
+    const nl = part.indexOf("\n");
+    let header = (nl >= 0 ? part.slice(0, nl) : part).trim().replace(/\(Home\)\s*$/i, "").trim();
+    const bodyTxt = nl >= 0 ? part.slice(nl + 1) : "";
+    const page = { id: id("p"), name: header || ("Page " + n), isHome: false, elements: [], memos: [], canvasW: 360, canvasH: 720 };
+
+    const xmlM = bodyTxt.match(/```xml\s*([\s\S]*?)```/);
+    if (xmlM) parseScreen(xmlM[1], page, id, linkFix, refFix);
+
+    const memoM = bodyTxt.match(/###[^\n]*Vibe Memos[^\n]*\n([\s\S]*?)(?=\n###|\n```|$)/);
+    if (memoM) {
+      memoM[1].split("\n").forEach(ln => {
+        const mm = ln.match(/^-\s*`?@\((\d+),\s*(\d+)\)`?\s*(.*)$/);
+        if (mm) page.memos.push({ id: id("m"), x: +mm[1], y: +mm[2], w: 180, h: 70, text: (mm[3].trim() === "(empty)" ? "" : mm[3].trim()) });
+      });
+    }
+    proj.pages.push(page);
+  });
+
+  const byName = (nm) => proj.pages.find(p => p.name === nm);
+  linkFix.forEach(({ el, name }) => { const p = byName(name); el.linkTo = p ? p.id : null; });
+  refFix.forEach(({ el, name }) => { const p = byName(name); el.ref = p ? p.id : null; });
+
+  // home / 入口
+  let home = homeName ? byName(homeName) : null;
+  if (!home) home = proj.pages.find(p => p.isHome) || proj.pages[0];
+  proj.pages.forEach(p => p.isHome = false);
+  if (home) home.isHome = true;
+
+  proj.seq = n;
+  proj.activePageId = (home || proj.pages[0]).id;
+  return proj;
+}
+
+function parseScreen(xml, page, id, linkFix, refFix) {
+  const doc = new DOMParser().parseFromString("<root>" + xml + "</root>", "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("XML 解析失败 / XML parse error in " + page.name);
+  const screen = doc.querySelector("screen") || doc.documentElement;
+  if (screen.getAttribute && screen.getAttribute("width")) page.canvasW = parseInt(screen.getAttribute("width")) || 360;
+  if (screen.getAttribute && screen.getAttribute("height")) page.canvasH = parseInt(screen.getAttribute("height")) || 720;
+  if (screen.getAttribute && screen.getAttribute("home") === "true") page.isHome = true;
+
+  let note = "";
+  screen.childNodes.forEach(node => {
+    if (node.nodeType === 8) { note = (node.nodeValue || "").trim(); return; }
+    if (node.nodeType !== 1) return;
+    const type = node.tagName.toLowerCase();
+    const num = (a, d) => { const v = node.getAttribute(a); return v != null && v !== "" ? parseFloat(v) : d; };
+    const el = {
+      id: id("e"), type,
+      x: num("x", 0), y: num("y", 0), w: num("w", 100), h: num("h", 40),
+      text: node.getAttribute("text") || "", note,
+      color: node.getAttribute("color") || "#ffffff",
+      opacity: node.getAttribute("opacity") != null ? parseFloat(node.getAttribute("opacity")) : 1,
+      linkTo: null, ref: null,
+    };
+    const lk = node.getAttribute("link"); if (lk) linkFix.push({ el, name: lk });
+    const rf = node.getAttribute("ref"); if (rf) refFix.push({ el, name: rf });
+    page.elements.push(el);
+    note = "";
+  });
+}
+
+// ====================================================================
+// Code editor / 代码编辑器
+// ====================================================================
+const codeArea = $("#codeArea");
+const codeHl = $("#codeHl").firstElementChild;
+
+function renderCode() {
+  codeArea.value = buildMarkdown();
+  updateHighlight();
+  codeDirty = false;
+}
+function updateHighlight() {
+  codeHl.innerHTML = highlightCode(codeArea.value) + "\n";
+  codeHl.parentElement.scrollTop = codeArea.scrollTop;
+}
+function applyCode() {
+  try {
+    const proj = parseMarkdown(codeArea.value);
+    project = proj;
+    migrate();              // fill defaults on the new project / 为新项目补默认值
+    selectedId = null; selectedKind = null; codeDirty = false;
+    toast("已应用到设计 / Applied to design");
+    return true;
+  } catch (err) {
+    toast("解析失败：" + err.message);
+    return false;
+  }
+}
+
+codeArea.addEventListener("input", () => { codeDirty = true; updateHighlight(); });
+codeArea.addEventListener("scroll", () => { codeHl.parentElement.scrollTop = codeArea.scrollTop; codeHl.parentElement.scrollLeft = codeArea.scrollLeft; });
+$("#cApply").onclick = () => { if (applyCode()) { setMode("visual"); } };
+$("#cRegen").onclick = () => {
+  if (codeDirty && !confirm("丢弃代码修改并从设计重新生成？/ Discard edits and regenerate?")) return;
+  renderCode(); toast("已重生成 / Regenerated");
+};
+$("#cCopy").onclick = () => copyText(codeArea.value);
+$("#cDownload").onclick = () => { download(new Blob([codeArea.value], { type: "text/markdown" }), "android-ui.md"); toast("已下载 / Downloaded"); };
+
+// lightweight syntax highlighter (XML + Markdown) / 轻量语法高亮
+function highlightCode(src) {
+  let s = src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const comments = [];
+  s = s.replace(/&lt;!--[\s\S]*?--&gt;/g, (m) => { comments.push(m); return "~~CMT" + (comments.length - 1) + "~~"; });
+  // xml tags + attributes
+  s = s.replace(/(&lt;\/?)([a-zA-Z][\w-]*)([\s\S]*?)(\/?&gt;)/g, (m, open, name, attrs, close) => {
+    const a = attrs.replace(/([\w-]+)(=)("[^"]*"|'[^']*')/g,
+      (mm, nm, eq, val) => `<span class="at">${nm}</span>${eq}<span class="vl">${val}</span>`);
+    return `<span class="pu">${open}</span><span class="tg">${name}</span>${a}<span class="pu">${close}</span>`;
+  });
+  // markdown headings & fences
+  s = s.replace(/^(#{1,6} .*)$/gm, '<span class="hd">$1</span>');
+  s = s.replace(/^(```.*)$/gm, '<span class="fn">$1</span>');
+  // restore comments
+  s = s.replace(/~~CMT(\d+)~~/g, (m, i) => `<span class="c">${comments[+i]}</span>`);
+  return s;
 }
 
 function copyText(t) {
@@ -871,8 +1178,22 @@ function copyText(t) {
   else fallbackCopy(t);
 }
 function fallbackCopy(t) {
-  const ta = $("#modalText"); ta.select(); document.execCommand("copy"); toast("已复制 / Copied");
+  const ta = document.createElement("textarea");
+  ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } catch (e) {}
+  ta.remove(); toast("已复制 / Copied");
 }
+
+// ====================================================================
+// Keyboard / 键盘
+// ====================================================================
+document.addEventListener("keydown", (e) => {
+  if ((e.key === "Delete" || e.key === "Backspace") && selectedId && mode === "visual" &&
+      document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+    e.preventDefault(); deleteSelected();
+  }
+});
 
 // ====================================================================
 // Misc / 杂项
@@ -887,13 +1208,15 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
 }
-$("#modal-bg").addEventListener("click", (e) => { if (e.target.id === "modal-bg") $("#modal-bg").style.display = "none"; });
 
 // ====================================================================
 // Boot / 启动
 // ====================================================================
+buildCanvasPresets();
 if (!load()) freshProject();
 if (!project.pages || !project.pages.length) freshProject();
+migrate();
+document.querySelector('[data-mode="visual"]').classList.add("active");
 render();
 </script>
 </body>

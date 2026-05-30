@@ -15,21 +15,29 @@ open index.html
 
 ## 功能 / Features
 
+- **三种视图 Three views**: 🎨 设计 Visual / { } 代码 Code / ▶ 预览 Preview，工具栏一键切换。
+  Switch between visual editing, an editable Markdown+XML code editor, and an interactive preview.
 - **绘制 Draw**: 矩形框 Frame / 输入框 Textfield / 按钮 Button / 列表 List
   从工具栏拖拽到画布。Drag from the toolbar onto the canvas.
 - **样式 Style**: 颜色 + 透明度 / color + opacity.
+- **📝 元素注释 Element note**: 每个元素可写说明，导出为该元素上方的 XML 注释行（AI 易读）。
+  Per-element description, exported as an XML comment line above the element.
 - **💭 Vibe Memo**: 给 AI 的自由描述，存在独立 SVG 图层，可折叠。
   Free-text notes for the AI, kept on a separate, foldable SVG layer.
 - **🔗 Link**: 把元素链接到其他页面，预览模式可点击跳转。
   Link an element to another page; click to jump in Preview mode.
+- **📦 嵌入 Include / 🧩 拍平 Flatten**: 把一整页作为元素嵌入（显示缩放快照），或"拍平"成算好坐标的普通元素副本。
+  Embed a whole page as an element (scaled snapshot), or flatten it into copied primitives with computed coordinates.
+- **画面尺寸 Canvas size**: 每页可选预设或自由设定宽高。
+  Per-page preset or custom width/height.
 - **页面 Pages**: 左侧纵向页面列表，支持入口页 (Home)。
   Vertical page list on the left, with a Home entry page.
 - **保存 Persistence**: 自动保存到 localStorage（刷新不丢）。
   Auto-saved to localStorage (survives reload).
-- **导入/导出 Import/Export**: 整个项目以 JSON 文件备份/迁移。
-  Back up / move the whole project as a JSON file.
-- **⤴ Markdown**: 导出 AI prompt（XML 风结构 + Vibe Memos + Links）。
-  Export an AI prompt (XML-flavored structure + memos + links).
+- **导入/导出 Import/Export**: 整个项目以 JSON 文件备份/迁移；Code 视图可复制/下载 `.md`。
+  Back up / move the whole project as JSON; copy or download `.md` from the Code view.
+- **代码即编辑器 Code = editor**: Markdown+XML 双向可编辑，"应用 Apply" 解析回设计，带语法高亮。
+  The Markdown+XML is editable two-way; "Apply" parses it back into the design, with syntax highlighting.
 
 ## 输出格式 / Output format
 
