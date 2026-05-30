@@ -231,6 +231,17 @@
   /* toast */
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
+  /* text position 3x3 picker / 文本位置九宫格 */
+  .pos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; width: 96px; }
+  .pos-grid button { height: 26px; padding: 0; font-size: 11px; }
+  .pos-grid button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* inline text editor over the canvas / 画布上的内联文本编辑 */
+  .inline-edit {
+    position: fixed; z-index: 120;
+    background: #fff; color: #111; border: 2px solid var(--accent);
+    border-radius: 4px; padding: 2px 6px; font-size: 14px;
+    font-family: inherit; outline: none;
+  }
 </style>
 </head>
 <body class="mode-visual">
@@ -444,7 +455,7 @@ function migrate() {
     if (!p.canvasW) p.canvasW = 360;
     if (!p.canvasH) p.canvasH = 720;
     if (!p.memos) p.memos = [];
-    (p.elements || []).forEach(e => { if (e.note == null) e.note = ""; if (e.ref === undefined) e.ref = null; if (e.groupId === undefined) e.groupId = null; });
+    (p.elements || []).forEach(e => { if (e.note == null) e.note = ""; if (e.ref === undefined) e.ref = null; if (e.groupId === undefined) e.groupId = null; if (e.textPos === undefined) e.textPos = null; });
   });
 }
 
@@ -566,6 +577,24 @@ function buildElement(el) {
   return g;
 }
 
+// default text position per type / 各类型默认文本位置
+const TEXT_DEFAULT_POS = { rect: "tl", textfield: "ml", button: "mc" };
+// resolve {x, y, anchor} for an element's text given its 9-anchor position
+// 依据 9 宫格位置算出文本的 {x, y, anchor}
+function textXY(el, size) {
+  const pos = el.textPos || TEXT_DEFAULT_POS[el.type] || "mc";
+  const row = pos[0], col = pos[1], pad = 10;
+  let x, anchor;
+  if (col === "l") { x = pad; anchor = "start"; }
+  else if (col === "r") { x = el.w - pad; anchor = "end"; }
+  else { x = el.w / 2; anchor = "middle"; }
+  let y;
+  if (row === "t") y = size + 6;
+  else if (row === "b") y = el.h - 8;
+  else y = el.h / 2 + size * 0.35;
+  return { x, y, anchor };
+}
+
 // draw the shapes for an element into a group (local coords, no events)
 // 把元素的形状画进一个分组（局部坐标，无事件）。depth 用于限制 include 递归。
 function drawShapes(g, el, depth) {
@@ -574,12 +603,15 @@ function drawShapes(g, el, depth) {
 
   if (el.type === "rect") {
     rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
+    if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor); }
   } else if (el.type === "textfield") {
     rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 6);
-    label(g, 12, el.h / 2 + 4, el.text || "Input...", "#8a8f99", 14, "start");
+    const s = 14, p = textXY(el, s);
+    label(g, p.x, p.y, el.text || "Input...", el.text ? "#444" : "#8a8f99", s, p.anchor);
   } else if (el.type === "button") {
     rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 22);
-    label(g, el.w / 2, el.h / 2 + 5, el.text || "Button", "#1d2330", 15, "middle", 600);
+    const s = 15, p = textXY(el, s);
+    label(g, p.x, p.y, el.text || "Button", "#1d2330", s, p.anchor, 600);
   } else if (el.type === "list") {
     rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
     const rows = Math.max(2, Math.floor(el.h / 44));
@@ -747,8 +779,16 @@ function renderProps() {
       `<select id="pRef"><option value="">— 选择 Select —</option>${pageOpts(obj.ref)}</select></div>` +
       `<button class="tool" id="pFlatten" style="width:100%;margin-bottom:12px">🧩 拍平为元素 Flatten to elements</button>`;
   } else {
-    html += `<div class="field"><label>文本 Text</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>` +
-      `<div class="field row"><div><label>颜色 Color</label><input type="color" id="pColor" value="${obj.color || "#ffffff"}"></div>` +
+    html += `<div class="field"><label>文本 Text（双击元素可直接编辑 / double-click to edit）</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>`;
+    if (["rect", "textfield", "button"].includes(obj.type)) {
+      const cur = obj.textPos || TEXT_DEFAULT_POS[obj.type];
+      const TPOS = ["tl","tc","tr","ml","mc","mr","bl","bc","br"];
+      const GLYPH = { tl:"↖", tc:"↑", tr:"↗", ml:"←", mc:"•", mr:"→", bl:"↙", bc:"↓", br:"↘" };
+      html += `<div class="field"><label>文本位置 Text position</label><div class="pos-grid">` +
+        TPOS.map(p => `<button data-pos="${p}" class="tool ${p === cur ? "active" : ""}">${GLYPH[p]}</button>`).join("") +
+        `</div></div>`;
+    }
+    html += `<div class="field row"><div><label>颜色 Color</label><input type="color" id="pColor" value="${obj.color || "#ffffff"}"></div>` +
       `<div style="flex:1"><label>透明度 Opacity</label><input type="range" id="pOp" min="0" max="1" step="0.05" value="${obj.opacity != null ? obj.opacity : 1}"></div></div>`;
   }
 
@@ -786,6 +826,9 @@ function renderProps() {
     $("#pColor").oninput = (e) => { obj.color = e.target.value; renderCanvas(); save(); };
     $("#pOp").oninput = (e) => { obj.opacity = parseFloat(e.target.value); renderCanvas(); save(); };
     $("#pLink").onchange = (e) => { obj.linkTo = e.target.value || null; renderCanvas(); save(); };
+    body.querySelectorAll(".pos-grid [data-pos]").forEach(b => b.onclick = () => {
+      obj.textPos = b.dataset.pos; save(); renderCanvas(); renderProps();
+    });
   }
   $("#pNote").oninput = (e) => { obj.note = e.target.value; renderCanvas(); save(); };
   ["W","H","X","Y"].forEach(k => {
@@ -959,7 +1002,7 @@ function addElement(type, x, y) {
     x: clamp(x - d.w / 2, 0, cw() - d.w),
     y: clamp(y - d.h / 2, 0, ch() - d.h),
     w: d.w, h: d.h,
-    text: d.text, note: "",
+    text: d.text, note: "", textPos: null,
     color: $("#fillColor").value,
     opacity: parseFloat($("#opacity").value),
     linkTo: null, ref: null, groupId: null,
@@ -1080,6 +1123,47 @@ canvas.addEventListener("pointerup", () => {
   if (band) { band = null; renderProps(); save(); return; }
   if (drag) { drag = null; renderProps(); save(); }
 });
+
+// double-click an element to edit its text inline / 双击元素直接编辑文本
+canvas.addEventListener("dblclick", (e) => {
+  if (mode !== "visual") return;
+  const g = e.target.closest(".el");
+  if (!g) return;
+  const el = activePage().elements.find(x => x.id === g.dataset.id);
+  if (!el || el.type === "include") return;
+  setSel("el", [el.id]); renderCanvas(); renderProps();
+  editTextInline(el);
+});
+
+let inlineEditor = null;
+function editTextInline(el) {
+  if (inlineEditor) inlineEditor.remove();
+  const r = canvas.getBoundingClientRect();
+  const scale = r.width / cw();
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.value = el.text || ""; inp.className = "inline-edit";
+  inp.style.left = (r.left + el.x * scale) + "px";
+  inp.style.top  = (r.top + el.y * scale) + "px";
+  inp.style.width = Math.max(60, el.w * scale) + "px";
+  document.body.appendChild(inp);
+  inlineEditor = inp;
+  inp.focus(); inp.select();
+  const orig = el.text || "";
+  let done = false;
+  const commit = (keep) => {
+    if (done) return; done = true;
+    el.text = keep ? inp.value : orig;   // Escape restores original / Esc 还原
+    save();
+    inp.remove(); inlineEditor = null; renderCanvas(); renderProps();
+  };
+  inp.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Enter") { ev.preventDefault(); commit(true); }
+    else if (ev.key === "Escape") { ev.preventDefault(); commit(false); }
+  });
+  inp.addEventListener("blur", () => commit(true));
+  inp.addEventListener("input", () => { el.text = inp.value; renderCanvas(); });
+}
 
 function clientToSvg(cx, cy) {
   const r = canvas.getBoundingClientRect();
@@ -1236,6 +1320,7 @@ function emitEl(el, ind) {
     attrs = [`x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`,
              `color="${el.color}"`, `opacity="${el.opacity != null ? el.opacity : 1}"`];
     if (el.text) attrs.push(`text="${esc(el.text)}"`);
+    if (el.textPos) attrs.push(`textpos="${el.textPos}"`);
     if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
   }
   s += `${ind}<${el.type} ${attrs.join(" ")}/>\n`;
@@ -1349,6 +1434,7 @@ function parseScreen(xml, page, id, linkFix, refFix) {
       id: id("e"), type,
       x: num("x", 0), y: num("y", 0), w: num("w", 100), h: num("h", 40),
       text: node.getAttribute("text") || "", note,
+      textPos: node.getAttribute("textpos") || null,
       color: node.getAttribute("color") || "#ffffff",
       opacity: node.getAttribute("opacity") != null ? parseFloat(node.getAttribute("opacity")) : 1,
       linkTo: null, ref: null, groupId: groupId || null,

@@ -36,11 +36,12 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 ## 数据结构 / Data model
 ```
 project = { pages:[ { id, name, isHome, canvasW, canvasH,
-  elements:[ {id,type,x,y,w,h,text,note,color,opacity,linkTo,ref,groupId} ],
+  elements:[ {id,type,x,y,w,h,text,textPos,note,color,opacity,linkTo,ref,groupId} ],
   memos:[ {id,x,y,w,h,text} ] } ], activePageId, seq }
 ```
 - 元素类型 element types: `rect` | `textfield` | `button` | `list` | `include`（`ref`=被嵌入页面 id）
 - `groupId`：同值 = 同组（扁平标记，非嵌套）。
+- `textPos`：文本在框内的 9 宫格位置（tl/tc/tr/ml/mc/mr/bl/bc/br），见 `textXY()`/`TEXT_DEFAULT_POS`；rect/textfield/button 都渲染文本。双击元素可内联编辑文本（`editTextInline`）。导出属性 `textpos`。
 - localStorage key: `easy-xml-project-v1`
 
 ## 待办 / TODO（候选）
