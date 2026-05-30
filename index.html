@@ -234,6 +234,16 @@
   /* toast */
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
+  /* popup menu / 弹出菜单 */
+  .popmenu { position: fixed; z-index: 300; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 10px 28px rgba(0,0,0,.5); min-width: 150px; }
+  .popmenu button { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .popmenu button:hover { background: var(--accent); color: #fff; }
+  .popmenu button.danger { color: var(--danger); }
+  .popmenu button.danger:hover { background: var(--danger); color: #fff; }
+  .popmenu button:disabled { opacity: .4; cursor: default; }
+  .popmenu button:disabled:hover { background: none; color: var(--text); }
+  .popmenu .sep { height: 1px; background: var(--border); margin: 4px 2px; }
+  .page-rename { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--accent); border-radius: 5px; color: var(--text); padding: 4px 6px; font-size: 13px; font-family: inherit; }
   /* text position 3x3 picker / 文本位置九宫格 */
   .pos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; width: 96px; }
   .pos-grid button { height: 26px; padding: 0; font-size: 11px; }
@@ -564,54 +574,94 @@ function syncCanvasControls() {
   $("#canvasPreset").value = preset >= 0 ? String(preset) : "custom";
 }
 
+let renamingPageId = null;   // page being renamed inline / 正在内联重命名的页面
+
 function renderPageList() {
   const list = $("#pageList");
   list.innerHTML = "";
   project.pages.forEach(p => {
     const div = document.createElement("div");
     div.className = "page-item" + (p.id === project.activePageId ? " active" : "");
-    div.innerHTML =
-      `<span class="home-dot">${p.isHome ? "★" : ""}</span>` +
-      `<span class="name">${escapeHtml(p.name)}</span>` +
-      `<span class="pgmenu" title="Menu">⋯</span>`;
-    div.querySelector(".name").onclick = () => { project.activePageId = p.id; clearSel(); render(); };
-    div.querySelector(".home-dot").onclick = () => { project.activePageId = p.id; clearSel(); render(); };
-    div.querySelector(".pgmenu").onclick = (e) => { e.stopPropagation(); pageMenu(p); };
+    div.appendChild(makeSpan("home-dot", p.isHome ? "★" : ""));
+    if (renamingPageId === p.id) {
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.value = p.name; inp.className = "page-rename";
+      const commit = (keep) => {
+        renamingPageId = null;
+        const v = inp.value.trim();
+        if (keep && v && v !== p.name) { snapshot(); p.name = v; }
+        render();
+      };
+      inp.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter") commit(true); else if (ev.key === "Escape") commit(false); };
+      inp.onblur = () => commit(true);
+      div.appendChild(inp);
+      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    } else {
+      const name = makeSpan("name", p.name);
+      name.onclick = () => { project.activePageId = p.id; clearSel(); render(); };
+      div.appendChild(name);
+      div.querySelector(".home-dot").onclick = () => { project.activePageId = p.id; clearSel(); render(); };
+      const menu = makeSpan("pgmenu", "⋯"); menu.title = "Menu";
+      menu.onclick = (e) => { e.stopPropagation(); const r = menu.getBoundingClientRect(); openPageMenu(p, r.left, r.bottom + 4); };
+      div.appendChild(menu);
+    }
     list.appendChild(div);
   });
 }
+function makeSpan(cls, text) { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; }
 
-function pageMenu(p) {
-  const action = prompt(
-    `Page: "${p.name}"\n\n` +
-    `Type an action:\n` +
-    `  r = Rename\n` +
-    `  h = Set as Home\n` +
-    `  d = Delete`, "");
-  if (action === null) return;
-  const a = action.trim().toLowerCase();
-  if (a === "r") {
-    const n = prompt("New name:", p.name);
-    if (n) { snapshot(); p.name = n.trim(); render(); }
-  } else if (a === "h") {
-    snapshot();
-    project.pages.forEach(x => x.isHome = false);
-    p.isHome = true; render();
-  } else if (a === "d") {
-    if (project.pages.length === 1) { toast("Keep at least one page"); return; }
-    if (confirm(`Delete "${p.name}"?`)) {
-      snapshot();
-      project.pages = project.pages.filter(x => x.id !== p.id);
-      // clear links / includes pointing here / 清除指向该页的链接与嵌入
-      project.pages.forEach(pg => pg.elements.forEach(el => {
-        if (el.linkTo === p.id) el.linkTo = null;
-        if (el.ref === p.id) el.ref = null;
-      }));
-      if (project.activePageId === p.id) project.activePageId = project.pages[0].id;
-      if (!project.pages.some(x => x.isHome)) project.pages[0].isHome = true;
-      render();
-    }
-  }
+function openPageMenu(p, x, y) {
+  openPopmenu(x, y, [
+    { label: "✎ Rename", action: () => { renamingPageId = p.id; render(); } },
+    { label: "★ Set as Home", disabled: p.isHome, action: () => {
+        snapshot(); project.pages.forEach(x => x.isHome = false); p.isHome = true; render();
+      } },
+    { sep: true },
+    { label: "🗑 Delete", danger: true, disabled: project.pages.length === 1, action: () => deletePage(p) },
+  ]);
+}
+function deletePage(p) {
+  if (project.pages.length === 1) return;
+  snapshot();
+  project.pages = project.pages.filter(x => x.id !== p.id);
+  project.pages.forEach(pg => pg.elements.forEach(el => {   // clear links / includes pointing here
+    if (el.linkTo === p.id) el.linkTo = null;
+    if (el.ref === p.id) el.ref = null;
+  }));
+  if (project.activePageId === p.id) project.activePageId = project.pages[0].id;
+  if (!project.pages.some(x => x.isHome)) project.pages[0].isHome = true;
+  render();
+  toast("Page deleted — ⌘/Ctrl+Z to undo");
+}
+
+// ---- lightweight popup menu (non-blocking) / 轻量弹出菜单（不打断） ----
+let popmenuEl = null;
+function closePopmenu() {
+  if (!popmenuEl) return;
+  popmenuEl.remove(); popmenuEl = null;
+  document.removeEventListener("pointerdown", onPopOutside, true);
+}
+function onPopOutside(e) { if (popmenuEl && !popmenuEl.contains(e.target)) closePopmenu(); }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopmenu(); });
+function openPopmenu(x, y, items) {
+  closePopmenu();
+  const m = document.createElement("div");
+  m.className = "popmenu";
+  items.forEach(it => {
+    if (it.sep) { const s = document.createElement("div"); s.className = "sep"; m.appendChild(s); return; }
+    const b = document.createElement("button");
+    b.textContent = it.label;
+    if (it.danger) b.className = "danger";
+    if (it.disabled) b.disabled = true;
+    else b.onclick = () => { closePopmenu(); it.action(); };
+    m.appendChild(b);
+  });
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, window.innerWidth - r.width - 8) + "px";
+  m.style.top = Math.min(y, window.innerHeight - r.height - 8) + "px";
+  popmenuEl = m;
+  setTimeout(() => document.addEventListener("pointerdown", onPopOutside, true), 0);
 }
 
 function renderCanvas() {
