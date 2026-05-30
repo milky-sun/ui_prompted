@@ -302,6 +302,7 @@
     <input type="number" id="canvasW" class="num" min="120" max="2000" title="宽 Width">
     <span style="color:var(--muted)">×</span>
     <input type="number" id="canvasH" class="num" min="120" max="4000" title="高 Height">
+    <button class="tool active" id="snapBtn" data-act="snap" title="吸附（网格+智能参考线）/ Snap (grid + guides)">⊞ 吸附 Snap</button>
   </div>
 
   <div class="group">
@@ -428,6 +429,9 @@ let mode = "visual";       // 'visual' | 'code' | 'preview'
 let codeDirty = false;     // code edited but not applied / 代码已改未应用
 let zoom = 1;              // canvas zoom factor / 画布缩放倍数
 let zoomFit = true;        // auto-fit to window / 自动适应窗口
+let clipboard = [];        // copied elements / 剪贴板（元素副本）
+let snapGrid = true;       // snap to grid while moving / 移动时网格吸附
+const GRID = 8;            // grid step (canvas units) / 网格步长
 
 const SVGNS = "http://www.w3.org/2000/svg";
 const $ = (sel) => document.querySelector(sel);
@@ -453,6 +457,33 @@ function load() {
     if (raw) { project = JSON.parse(raw); return true; }
   } catch (e) { console.warn("load failed", e); }
   return false;
+}
+
+// ---- Undo / Redo history / 撤销·重做历史 ----
+const undoStack = [], redoStack = [];
+const HMAX = 100;
+// capture the current state BEFORE a mutating action / 在改动前快照
+function snapshot() {
+  undoStack.push(JSON.stringify(project));
+  if (undoStack.length > HMAX) undoStack.shift();
+  redoStack.length = 0;
+}
+function restoreState(json) {
+  project = JSON.parse(json);
+  migrate();
+  if (!project.pages.some(p => p.id === project.activePageId)) project.activePageId = project.pages[0].id;
+  clearSel();
+  render();
+}
+function undo() {
+  if (!undoStack.length) { toast("无可撤销 / Nothing to undo"); return; }
+  redoStack.push(JSON.stringify(project));
+  restoreState(undoStack.pop());
+}
+function redo() {
+  if (!redoStack.length) { toast("无可重做 / Nothing to redo"); return; }
+  undoStack.push(JSON.stringify(project));
+  restoreState(redoStack.pop());
 }
 function activePage() {
   return project.pages.find(p => p.id === project.activePageId) || project.pages[0];
@@ -522,6 +553,8 @@ function applyStyleToSelection(key, val) {
 }
 $("#fillColor").addEventListener("input", (e) => applyStyleToSelection("color", e.target.value));
 $("#opacity").addEventListener("input", (e) => applyStyleToSelection("opacity", parseFloat(e.target.value)));
+// snapshot once when a Style control gains focus (so the edit is undoable) / 聚焦时快照一次
+["#fillColor", "#opacity"].forEach(s => $(s).addEventListener("focus", () => { if (selection.ids.length) snapshot(); }));
 
 function syncCanvasControls() {
   const p = activePage();
@@ -559,13 +592,15 @@ function pageMenu(p) {
   const a = action.trim().toLowerCase();
   if (a === "r") {
     const n = prompt("新名称 / New name:", p.name);
-    if (n) { p.name = n.trim(); render(); }
+    if (n) { snapshot(); p.name = n.trim(); render(); }
   } else if (a === "h") {
+    snapshot();
     project.pages.forEach(x => x.isHome = false);
     p.isHome = true; render();
   } else if (a === "d") {
     if (project.pages.length === 1) { toast("至少保留一个页面 / Keep at least one page"); return; }
     if (confirm(`删除 "${p.name}"? / Delete?`)) {
+      snapshot();
       project.pages = project.pages.filter(x => x.id !== p.id);
       // clear links / includes pointing here / 清除指向该页的链接与嵌入
       project.pages.forEach(pg => pg.elements.forEach(el => {
@@ -903,11 +938,14 @@ function renderProps() {
     html += `<div class="field"><label>🔗 链接到 Link to page</label>` +
       `<select id="pLink"><option value="">— 无 None —</option>${pageOpts(obj.linkTo)}</select></div>`;
   }
+  html += zOrderHTML();
   if (obj.groupId) html += `<button class="tool" id="pUngroup1" style="width:100%;margin-bottom:8px">⊟ 解除编组 Ungroup</button>`;
   html += `<button class="btn-danger" id="pDelete">删除 Delete</button>`;
   body.innerHTML = html;
+  bindZOrder(body);
 
   if (obj.groupId && $("#pUngroup1")) $("#pUngroup1").onclick = () => {
+    snapshot();
     const gid = obj.groupId;
     activePage().elements.forEach(e => { if (e.groupId === gid) e.groupId = null; });
     render(); toast("已解除编组 / Ungrouped");
@@ -926,7 +964,7 @@ function renderProps() {
     $("#pOp").oninput = (e) => { obj.opacity = parseFloat(e.target.value); renderCanvas(); save(); };
     $("#pLink").onchange = (e) => { obj.linkTo = e.target.value || null; renderCanvas(); save(); };
     body.querySelectorAll(".pos-grid [data-pos]").forEach(b => b.onclick = () => {
-      obj.textPos = b.dataset.pos; save(); renderCanvas(); renderProps();
+      snapshot(); obj.textPos = b.dataset.pos; save(); renderCanvas(); renderProps();
     });
   }
   $("#pNote").oninput = (e) => { obj.note = e.target.value; renderCanvas(); save(); };
@@ -957,11 +995,18 @@ function renderMultiProps(body, objs) {
     `<button class="tool" data-align="top">⤒ 上</button>` +
     `<button class="tool" data-align="vcenter">⇕ 中</button>` +
     `<button class="tool" data-align="bottom">⤓ 下</button></div>` +
+    `<div class="field row" style="margin-top:4px"><label style="margin:0">分布 Distribute (3+)</label></div>` +
+    `<div class="row" style="gap:4px;margin-bottom:12px">` +
+    `<button class="tool" data-dist="h">↔ 横向</button>` +
+    `<button class="tool" data-dist="v">↕ 纵向</button></div>` +
+    zOrderHTML() +
     `<button class="btn-danger" id="pDelete">删除全部 Delete all</button>`;
   if (allSameGroup) { const u = $("#pUngroup"); if (u) u.textContent = "⊟ 解除编组 Ungroup"; }
   $("#pGroup").onclick = groupSelection;
   if ($("#pUngroup")) $("#pUngroup").onclick = ungroupSelection;
   body.querySelectorAll("[data-align]").forEach(b => b.onclick = () => alignSelection(b.dataset.align));
+  body.querySelectorAll("[data-dist]").forEach(b => b.onclick = () => distribute(b.dataset.dist));
+  bindZOrder(body);
   $("#pDelete").onclick = deleteSelected;
 }
 
@@ -969,12 +1014,15 @@ function renderMultiProps(body, objs) {
 function groupSelection() {
   const objs = selObjs();
   if (objs.length < 2) return;
+  snapshot();
   const gid = nextId("g");
   objs.forEach(o => o.groupId = gid);
   render();
   toast("已编组 / Grouped");
 }
 function ungroupSelection() {
+  if (!selObjs().some(o => o.groupId)) return;
+  snapshot();
   selObjs().forEach(o => o.groupId = null);
   render();
   toast("已解除编组 / Ungrouped");
@@ -982,6 +1030,7 @@ function ungroupSelection() {
 function alignSelection(how) {
   const objs = selObjs();
   if (objs.length < 2) return;
+  snapshot();
   const xs = objs.map(o => o.x), ys = objs.map(o => o.y);
   const x2 = objs.map(o => o.x + o.w), y2 = objs.map(o => o.y + o.h);
   const minX = Math.min(...xs), maxX = Math.max(...x2);
@@ -996,6 +1045,80 @@ function alignSelection(how) {
   });
   render();
 }
+// distribute 3+ elements with equal gaps along an axis / 沿轴等间隔分布
+function distribute(axis) {
+  const objs = selObjs();
+  if (objs.length < 3) { toast("需选 3 个以上 / Select 3+ elements"); return; }
+  snapshot();
+  const sz = (o) => axis === "h" ? o.w : o.h;
+  const pos = (o) => axis === "h" ? o.x : o.y;
+  const set = (o, v) => { if (axis === "h") o.x = v; else o.y = v; };
+  const sorted = objs.slice().sort((a, b) => (pos(a) + sz(a) / 2) - (pos(b) + sz(b) / 2));
+  const first = sorted[0], last = sorted[sorted.length - 1];
+  const span = (pos(last) + sz(last) / 2) - (pos(first) + sz(first) / 2);
+  const step = span / (sorted.length - 1);
+  sorted.forEach((o, i) => { if (i > 0 && i < sorted.length - 1) set(o, (pos(first) + sz(first) / 2) + step * i - sz(o) / 2); });
+  render();
+}
+
+// ---- z-order (array order = paint order; last = front) / 层级（数组序=绘制序，末尾在前） ----
+function reorder(mode) {
+  if (selection.kind !== "el" || !selection.ids.length) return;
+  snapshot();
+  const page = activePage();
+  const els = page.elements;
+  const sel = new Set(selection.ids);
+  if (mode === "front") {
+    page.elements = els.filter(e => !sel.has(e.id)).concat(els.filter(e => sel.has(e.id)));
+  } else if (mode === "back") {
+    page.elements = els.filter(e => sel.has(e.id)).concat(els.filter(e => !sel.has(e.id)));
+  } else if (mode === "forward") {            // one step toward front (array end)
+    for (let i = els.length - 2; i >= 0; i--)
+      if (sel.has(els[i].id) && !sel.has(els[i + 1].id)) { const t = els[i]; els[i] = els[i + 1]; els[i + 1] = t; }
+  } else if (mode === "backward") {           // one step toward back (array start)
+    for (let i = 1; i < els.length; i++)
+      if (sel.has(els[i].id) && !sel.has(els[i - 1].id)) { const t = els[i]; els[i] = els[i - 1]; els[i - 1] = t; }
+  }
+  render();
+}
+
+// z-order buttons (shared by single & multi props) / 层级按钮（单选/多选共用）
+function zOrderHTML() {
+  return `<div class="field"><label>层级 Order</label><div class="row" style="flex-wrap:wrap;gap:4px">` +
+    `<button class="tool" data-z="front" title="置顶 Front">⤒</button>` +
+    `<button class="tool" data-z="forward" title="上移 Forward">↑</button>` +
+    `<button class="tool" data-z="backward" title="下移 Backward">↓</button>` +
+    `<button class="tool" data-z="back" title="置底 Back">⤓</button></div></div>`;
+}
+function bindZOrder(scope) { scope.querySelectorAll("[data-z]").forEach(b => b.onclick = () => reorder(b.dataset.z)); }
+
+// clone elements into the active page with an offset (paste / duplicate) / 复制粘贴
+function cloneInto(srcEls, offset) {
+  if (!srcEls || !srcEls.length) return;
+  snapshot();
+  const gmap = {};
+  const newIds = [];
+  srcEls.forEach(s => {
+    const c = JSON.parse(JSON.stringify(s));
+    c.id = nextId("e");
+    c.x = clamp((s.x || 0) + offset, 0, cw() - (s.w || 40));
+    c.y = clamp((s.y || 0) + offset, 0, ch() - (s.h || 40));
+    if (s.groupId) { if (!gmap[s.groupId]) gmap[s.groupId] = nextId("g"); c.groupId = gmap[s.groupId]; }
+    else c.groupId = null;
+    activePage().elements.push(c);
+    newIds.push(c.id);
+  });
+  setSel("el", newIds);
+  render();
+}
+function copySel() {
+  if (selection.kind === "el" && selection.ids.length) {
+    clipboard = selObjs().map(o => JSON.parse(JSON.stringify(o)));
+    toast(`已复制 ${clipboard.length} / Copied ${clipboard.length}`);
+  }
+}
+function pasteSel() { if (clipboard.length) cloneInto(clipboard, 14); }
+function duplicateSel() { if (selection.kind === "el" && selection.ids.length) cloneInto(selObjs(), 14); }
 
 // canvas-level properties shown when nothing selected / 未选中时显示画面属性
 function renderCanvasProps(body) {
@@ -1026,6 +1149,7 @@ function wouldRecurse(includeEl, targetPageId, seen) {
 }
 
 function deleteSelected() {
+  snapshot();
   const page = activePage();
   const ids = new Set(selection.ids);
   if (selection.kind === "memo") page.memos = page.memos.filter(m => !ids.has(m.id));
@@ -1039,6 +1163,7 @@ function deleteSelected() {
 function flattenInclude(el) {
   const ref = el.ref && project.pages.find(p => p.id === el.ref);
   if (!ref) { toast("先选择嵌入页面 / Pick a page to embed first"); return; }
+  snapshot();
   const added = [];
   const visited = new Set();           // 防循环 / cycle guard
   function bake(srcPage, ox, oy, sc, depth) {
@@ -1074,6 +1199,7 @@ function flattenInclude(el) {
 }
 
 function applyCanvasSize(w, h) {
+  snapshot();
   const p = activePage();
   p.canvasW = clamp(w, 120, 4000);
   p.canvasH = clamp(h, 120, 4000);
@@ -1100,6 +1226,7 @@ canvas.addEventListener("drop", (e) => {
 function addElement(type, x, y) {
   const d = DEFAULTS[type];
   if (!d) return;
+  snapshot();
   let w = d.w, h = d.h, ex = clamp(x - w / 2, 0, cw() - w), ey = clamp(y - h / 2, 0, ch() - h);
   // structural elements snap into place / 结构性元素自动吸附
   if (type === "topbar")      { w = cw(); ex = 0; ey = 0; }
@@ -1120,6 +1247,7 @@ function addElement(type, x, y) {
 }
 
 function addMemo(x, y) {
+  snapshot();
   const m = { id: nextId("m"), x: clamp(x - 90, 0, cw() - 180), y: clamp(y - 35, 0, ch() - 70), w: 180, h: 70, text: "" };
   activePage().memos.push(m);
   setSel("memo", [m.id]);
@@ -1213,22 +1341,73 @@ canvas.addEventListener("pointermove", (e) => {
   if (!drag) return;
   const dx = (e.clientX - drag.startX) / scale;
   const dy = (e.clientY - drag.startY) / scale;
+  if ((dx || dy) && !drag.snapped) { snapshot(); drag.snapped = true; }  // history once per gesture
   if (drag.mode === "move") {
-    drag.items.forEach(it => {
-      it.o.x = clamp(it.ox + dx, 0, cw() - (it.o.w || 180));
-      it.o.y = clamp(it.oy + dy, 0, ch() - (it.o.h || 70));
+    const its = drag.items;
+    let ndx = dx, ndy = dy;
+    const bx0 = Math.min(...its.map(it => it.ox)) + ndx;
+    const by0 = Math.min(...its.map(it => it.oy)) + ndy;
+    const bx1 = Math.max(...its.map(it => it.ox + it.o.w)) + ndx;
+    const by1 = Math.max(...its.map(it => it.oy + it.o.h)) + ndy;
+    const snap = smartSnap(bx0, by0, bx1, by1);
+    ndx += snap.ox; ndy += snap.oy;
+    its.forEach(it => {
+      it.o.x = clamp(it.ox + ndx, 0, cw() - it.o.w);
+      it.o.y = clamp(it.oy + ndy, 0, ch() - it.o.h);
     });
+    renderCanvas();
+    snap.guides.forEach(drawGuide);
   } else if (drag.mode === "resize") {
-    drag.obj.w = clamp(drag.ow + dx, 24, cw() - drag.obj.x);
-    drag.obj.h = clamp(drag.oh + dy, 20, ch() - drag.obj.y);
+    let w = drag.ow + dx, h = drag.oh + dy;
+    if (snapGrid) { w = Math.round(w / GRID) * GRID; h = Math.round(h / GRID) * GRID; }
+    drag.obj.w = clamp(w, 24, cw() - drag.obj.x);
+    drag.obj.h = clamp(h, 20, ch() - drag.obj.y);
+    renderCanvas();
   }
-  renderCanvas();
 });
 
 canvas.addEventListener("pointerup", () => {
   if (band) { band = null; renderProps(); save(); return; }
   if (drag) { drag = null; renderProps(); save(); }
 });
+
+// snap the selection bbox to other elements' edges/centers & canvas guides; else grid
+// 将选区外框吸附到其他元素的边/中心和画布参考线；否则吸附到网格
+function smartSnap(bx0, by0, bx1, by1) {
+  const T = 6 / zoom;
+  const selIds = new Set(selection.ids);
+  const xs = [0, cw() / 2, cw()], ys = [0, ch() / 2, ch()];
+  activePage().elements.forEach(el => {
+    if (selIds.has(el.id)) return;
+    xs.push(el.x, el.x + el.w / 2, el.x + el.w);
+    ys.push(el.y, el.y + el.h / 2, el.y + el.h);
+  });
+  const guides = [];
+  const findSnap = (edges, cands) => {
+    let best = null;
+    edges.forEach(edge => cands.forEach(c => {
+      const d = c - edge;
+      if (Math.abs(d) <= T && (best === null || Math.abs(d) < Math.abs(best.d))) best = { d, c };
+    }));
+    return best;
+  };
+  let ox = 0, oy = 0;
+  const sx = findSnap([bx0, (bx0 + bx1) / 2, bx1], xs);
+  const sy = findSnap([by0, (by0 + by1) / 2, by1], ys);
+  if (sx) { ox = sx.d; guides.push({ x: sx.c }); }
+  else if (snapGrid) ox = Math.round(bx0 / GRID) * GRID - bx0;
+  if (sy) { oy = sy.d; guides.push({ y: sy.c }); }
+  else if (snapGrid) oy = Math.round(by0 / GRID) * GRID - by0;
+  return { ox, oy, guides };
+}
+function drawGuide(gd) {
+  const ln = document.createElementNS(SVGNS, "line");
+  if (gd.x != null) { ln.setAttribute("x1", gd.x); ln.setAttribute("y1", 0); ln.setAttribute("x2", gd.x); ln.setAttribute("y2", ch()); }
+  else { ln.setAttribute("x1", 0); ln.setAttribute("y1", gd.y); ln.setAttribute("x2", cw()); ln.setAttribute("y2", gd.y); }
+  ln.setAttribute("stroke", "#ff4db8"); ln.setAttribute("stroke-width", "1");
+  ln.setAttribute("pointer-events", "none");
+  overlay.appendChild(ln);
+}
 
 // double-click an element to edit its text inline / 双击元素直接编辑文本
 canvas.addEventListener("dblclick", (e) => {
@@ -1314,7 +1493,7 @@ document.addEventListener("click", (e) => {
   const act = btn.dataset.act;
   if (act === "newpage") {
     const name = prompt("新页面名称 / New page name:", "Page " + (project.pages.length + 1));
-    if (name !== null) { const p = createPage(name.trim() || undefined); project.activePageId = p.id; clearSel(); render(); }
+    if (name !== null) { snapshot(); const p = createPage(name.trim() || undefined); project.activePageId = p.id; clearSel(); render(); }
   } else if (act === "export") {
     exportJSON();
   } else if (act === "import") {
@@ -1330,6 +1509,10 @@ document.addEventListener("click", (e) => {
     renderCanvas();
   } else if (act === "toggletb") {
     toggleToolbar();
+  } else if (act === "snap") {
+    snapGrid = !snapGrid;
+    $("#snapBtn").classList.toggle("active", snapGrid);
+    toast(snapGrid ? "吸附开 / Snap on" : "吸附关 / Snap off");
   }
 });
 
@@ -1589,6 +1772,7 @@ function updateHighlight() {
 function applyCode() {
   try {
     const proj = parseMarkdown(codeArea.value);
+    snapshot();
     project = proj;
     migrate();              // fill defaults on the new project / 为新项目补默认值
     clearSel(); codeDirty = false;
@@ -1647,15 +1831,42 @@ function fallbackCopy(t) {
 document.addEventListener("keydown", (e) => {
   const typing = document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA";
   if (typing || mode !== "visual") return;
-  if ((e.key === "Delete" || e.key === "Backspace") && selection.ids.length) {
-    e.preventDefault(); deleteSelected();
-  } else if ((e.metaKey || e.ctrlKey) && (e.key === "g" || e.key === "G")) {
+  const mod = e.metaKey || e.ctrlKey;   // ⌘ (Mac) or Ctrl (Windows) / 跨平台
+  const k = e.key.toLowerCase();
+
+  // ---- undo / redo ----
+  if (mod && k === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+  if (mod && k === "y") { e.preventDefault(); redo(); return; }
+  // ---- copy / paste / duplicate ----
+  if (mod && k === "c") { e.preventDefault(); copySel(); return; }
+  if (mod && k === "v") { e.preventDefault(); pasteSel(); return; }
+  if (mod && k === "d") { e.preventDefault(); duplicateSel(); return; }
+  // ---- select all / group ----
+  if (mod && k === "a") { e.preventDefault(); setSel("el", activePage().elements.map(el => el.id)); render(); return; }
+  if (mod && k === "g") { e.preventDefault(); if (e.shiftKey) ungroupSelection(); else groupSelection(); return; }
+  // ---- z-order: ] forward / [ backward, Shift → front / back ----
+  if (mod && (k === "]" || k === "}")) { e.preventDefault(); reorder(e.shiftKey ? "front" : "forward"); return; }
+  if (mod && (k === "[" || k === "{")) { e.preventDefault(); reorder(e.shiftKey ? "back" : "backward"); return; }
+  // ---- delete ----
+  if ((e.key === "Delete" || e.key === "Backspace") && selection.ids.length) { e.preventDefault(); deleteSelected(); return; }
+  // ---- arrow-key nudge (1px, Shift = 10px) ----
+  const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  if (arrows[e.key] && selection.ids.length) {
     e.preventDefault();
-    if (e.shiftKey) ungroupSelection(); else groupSelection();
-  } else if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
-    e.preventDefault();
-    setSel("el", activePage().elements.map(el => el.id)); render();
+    if (!e.repeat) snapshot();
+    const step = e.shiftKey ? 10 : 1;
+    const [sx, sy] = arrows[e.key];
+    selObjs().forEach(o => {
+      o.x = clamp(o.x + sx * step, 0, cw() - (o.w || 0));
+      o.y = clamp(o.y + sy * step, 0, ch() - (o.h || 0));
+    });
+    renderCanvas(); renderProps(); save();
   }
+});
+
+// snapshot once when the user starts editing a property field / 编辑属性前快照一次
+$("#props").addEventListener("focusin", (e) => {
+  if (e.target.matches("input, textarea, select")) snapshot();
 });
 
 // ====================================================================

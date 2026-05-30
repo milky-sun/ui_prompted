@@ -32,8 +32,13 @@ open index.html
   Link an element to another page; click to jump in Preview mode.
 - **📦 嵌入 Include / 🧩 拍平 Flatten**: 把一整页作为元素嵌入（显示缩放快照），或"拍平"成算好坐标的普通元素副本。
   Embed a whole page as an element (scaled snapshot), or flatten it into copied primitives with computed coordinates.
-- **复数选择 + 编组 Multi-select + Group**: Shift+点击 / 空白处框选多选；⌘/Ctrl+A 全选；⌘/Ctrl+G 编组、⌘/Ctrl+⇧+G 解组；可一键对齐。组在导出里用 `<group>` 包裹。
-  Shift-click or rubber-band to multi-select; ⌘/Ctrl+A select all; ⌘/Ctrl+G group, ⌘/Ctrl+⇧+G ungroup; one-click align. Groups export as `<group>` wrappers.
+- **复数选择 + 编组 Multi-select + Group**: Shift+点击 / 空白处框选多选；⌘/Ctrl+A 全选；⌘/Ctrl+G 编组、⌘/Ctrl+⇧+G 解组；可一键对齐 / 分布。组在导出里用 `<group>` 包裹。
+  Shift-click or rubber-band to multi-select; ⌘/Ctrl+A select all; ⌘/Ctrl+G group, ⌘/Ctrl+⇧+G ungroup; one-click align / distribute. Groups export as `<group>` wrappers.
+- **编辑基础 Editing essentials（Mac/Win 双支持）**:
+  撤销/重做 Undo/Redo（⌘/Ctrl+Z, ⇧Z 或 Ctrl+Y）；复制/粘贴/副本 Copy/Paste/Duplicate（⌘/Ctrl+C/V/D）；
+  方向键微移 1px、⇧+方向键 10px；层级 z-order（⌘/Ctrl+]/[，⇧ 置顶/置底，或属性面板按钮）。
+- **吸附 Snap**: 网格吸附 + 智能参考线（拖动时对齐其他元素的边/中心和画布中线），工具栏可开关。
+  Grid snapping + smart guides (align to other elements' edges/centers and canvas midlines) while dragging; toggle in the toolbar.
 - **画面尺寸 Canvas size**: 每页可选预设或自由设定宽高。
   Per-page preset or custom width/height.
 - **小窗适配 Small viewport**: 工具栏可折叠（☰ 展开），画布自动缩放适应窗口，右下角可输入缩放百分比。
