@@ -266,11 +266,24 @@
   </div>
 
   <div class="group">
-    <span class="group-label">绘制 Draw</span>
+    <span class="group-label">基础 Basic</span>
+    <div class="tool draw" draggable="true" data-type="text">T 文本 Text</div>
     <div class="tool draw" draggable="true" data-type="rect">▭ 框 Frame</div>
-    <div class="tool draw" draggable="true" data-type="textfield">▭ 输入 Textfield</div>
+    <div class="tool draw" draggable="true" data-type="image">🖼 图片 Image</div>
+    <div class="tool draw" draggable="true" data-type="icon">★ 图标 Icon</div>
     <div class="tool draw" draggable="true" data-type="button">▢ 按钮 Button</div>
+    <div class="tool draw" draggable="true" data-type="textfield">▭ 输入 Textfield</div>
+    <div class="tool draw" draggable="true" data-type="toggle">◑ 开关 Toggle</div>
+    <div class="tool draw" draggable="true" data-type="divider">— 分割 Divider</div>
+  </div>
+
+  <div class="group">
+    <span class="group-label">组件 Components</span>
+    <div class="tool draw" draggable="true" data-type="card">▢ 卡片 Card</div>
     <div class="tool draw" draggable="true" data-type="list">☰ 列表 List</div>
+    <div class="tool draw" draggable="true" data-type="topbar">▔ 顶栏 Top Bar</div>
+    <div class="tool draw" draggable="true" data-type="bottombar">▁ 底栏 Bottom Bar</div>
+    <div class="tool draw" draggable="true" data-type="fab">＋ 悬浮 FAB</div>
     <div class="tool draw" draggable="true" data-type="include" title="把另一页面作为元素嵌入 / Embed another page as an element">📦 嵌入 Include</div>
   </div>
 
@@ -363,23 +376,37 @@
 // ====================================================================
 const STORE_KEY = "easy-xml-project-v1";
 
-// Default element sizes / 默认尺寸
+// Default element sizes / 默认尺寸 (color optional: foreground for text-like)
 const DEFAULTS = {
   rect:      { w: 200, h: 130, text: "" },
+  text:      { w: 160, h: 28,  text: "Text", color: "#1d2330" },
   textfield: { w: 240, h: 46,  text: "Input..." },
   button:    { w: 140, h: 46,  text: "Button" },
   list:      { w: 260, h: 220, text: "Item" },
+  image:     { w: 200, h: 140, text: "", color: "#eef0f3" },
+  icon:      { w: 44,  h: 44,  text: "★", color: "#1d2330" },
+  card:      { w: 240, h: 160, text: "" },
+  topbar:    { w: 360, h: 56,  text: "Title" },
+  bottombar: { w: 360, h: 60,  text: "Home,Search,Profile" },
+  fab:       { w: 56,  h: 56,  text: "＋", color: "#5b9dff" },
+  toggle:    { w: 52,  h: 30,  text: "", color: "#5b9dff" },
+  divider:   { w: 240, h: 2,   text: "", color: "#d0d0d0" },
   include:   { w: 170, h: 130, text: "" },
 };
 
 // Canvas presets / 画面预设
 const CANVAS_PRESETS = [
-  { label: "Phone 360×720",   w: 360,  h: 720 },
-  { label: "Phone 360×800",   w: 360,  h: 800 },
-  { label: "Phone L 412×915", w: 412,  h: 915 },
-  { label: "Compact 320×568", w: 320,  h: 568 },
-  { label: "Tablet 800×1280", w: 800,  h: 1280 },
+  { label: "Phone 360×720",    w: 360,  h: 720 },
+  { label: "Phone 360×800",    w: 360,  h: 800 },
+  { label: "Phone L 412×915",  w: 412,  h: 915 },
+  { label: "Compact 320×568",  w: 320,  h: 568 },
+  { label: "Tablet 800×1280",  w: 800,  h: 1280 },
+  { label: "Web 1280×800",     w: 1280, h: 800 },
+  { label: "Desktop 1440×900", w: 1440, h: 900 },
 ];
+
+// target platforms (hint passed to AI) / 目标平台（提示给 AI）
+const TARGETS = ["Android", "iOS", "Web", "Desktop", "Mobile (generic)"];
 
 let project = null;        // { pages, activePageId, seq }
 let selection = { kind: "el", ids: [] };   // multi-select / 复数选择
@@ -451,6 +478,7 @@ function createPage(name) {
 // fill defaults for old data / 兼容旧数据
 function migrate() {
   if (!project.pages) return;
+  if (!project.target) project.target = "Android";
   project.pages.forEach(p => {
     if (!p.canvasW) p.canvasW = 360;
     if (!p.canvasH) p.canvasH = 720;
@@ -578,7 +606,7 @@ function buildElement(el) {
 }
 
 // default text position per type / 各类型默认文本位置
-const TEXT_DEFAULT_POS = { rect: "tl", textfield: "ml", button: "mc" };
+const TEXT_DEFAULT_POS = { rect: "tl", text: "ml", textfield: "ml", button: "mc", card: "tl" };
 // resolve {x, y, anchor} for an element's text given its 9-anchor position
 // 依据 9 宫格位置算出文本的 {x, y, anchor}
 function textXY(el, size) {
@@ -620,6 +648,45 @@ function drawShapes(g, el, depth) {
       const ly = i * (el.h / rows) + (el.h / rows) / 2 + 4;
       label(g, 14, ly, (el.text || "Item") + " " + (i + 1), "#4a4f59", 13, "start");
     }
+  } else if (el.type === "text") {
+    // plain text label, no box / 纯文本，无边框
+    const s = Math.min(Math.max(el.h * 0.7, 12), 28), p = textXY(el, s);
+    label(g, p.x, p.y, el.text || "Text", el.color || "#1d2330", s, p.anchor);
+  } else if (el.type === "image") {
+    rect(g, 0, 0, el.w, el.h, el.color || "#eef0f3", op, "#c4c9d2", 8);
+    line(g, 0, 0, el.w, el.h, "#c4c9d2"); line(g, el.w, 0, 0, el.h, "#c4c9d2");
+    label(g, el.w / 2, el.h / 2 + 6, el.text || "🖼", "#8a8f99", 16, "middle");
+  } else if (el.type === "icon") {
+    const s = Math.min(el.w, el.h) * 0.82;
+    label(g, el.w / 2, el.h / 2 + s * 0.35, el.text || "★", el.color || "#1d2330", s, "middle");
+  } else if (el.type === "card") {
+    rect(g, 2, 3, el.w, el.h, "#00000018", op, "none", 12);   // soft shadow / 阴影
+    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 12);
+    if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor, 600); }
+  } else if (el.type === "topbar") {
+    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#5b9dff" : el.color, op, "none", 0);
+    label(g, 16, el.h / 2 + 6, "≡", "#fff", 20, "start");
+    label(g, 46, el.h / 2 + 5, el.text || "Title", "#fff", 16, "start", 600);
+    label(g, el.w - 16, el.h / 2 + 6, "⋮", "#fff", 20, "end");
+  } else if (el.type === "bottombar") {
+    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 0);
+    const items = (el.text || "Tab").split(",").map(s => s.trim()).filter(Boolean);
+    const n = Math.max(1, items.length);
+    items.forEach((it, i) => {
+      const cx = (i + 0.5) * (el.w / n);
+      circle(g, cx, el.h * 0.32, 8, i === 0 ? "#5b9dff" : "#b9bfca", "none");
+      label(g, cx, el.h * 0.78, it, i === 0 ? "#5b9dff" : "#8a8f99", 11, "middle");
+    });
+  } else if (el.type === "fab") {
+    const rr = Math.min(el.w, el.h) / 2;
+    circle(g, el.w / 2, el.h / 2, rr, el.color || "#5b9dff", "none");
+    label(g, el.w / 2, el.h / 2 + 8, el.text || "＋", "#fff", rr, "middle", 600);
+  } else if (el.type === "toggle") {
+    const rr = el.h / 2;
+    rect(g, 0, 0, el.w, el.h, el.color || "#5b9dff", op, "none", rr);   // "on" track
+    circle(g, el.w - rr, rr, rr - 3, "#fff", "none");                   // knob right
+  } else if (el.type === "divider") {
+    rect(g, 0, 0, el.w, Math.max(1, el.h), el.color || "#d0d0d0", op, "none", 0);
   } else if (el.type === "include") {
     rect(g, 0, 0, el.w, el.h, "#eef2ff", op, "#5b9dff", 8);
     const ref = el.ref ? project.pages.find(p => p.id === el.ref) : null;
@@ -689,6 +756,13 @@ function line(parent, x1, y1, x2, y2, color) {
   e.setAttribute("x1", x1); e.setAttribute("y1", y1);
   e.setAttribute("x2", x2); e.setAttribute("y2", y2);
   e.setAttribute("stroke", color); e.setAttribute("stroke-width", "1");
+  parent.appendChild(e);
+}
+function circle(parent, cx, cy, r, fill, stroke) {
+  const e = document.createElementNS(SVGNS, "circle");
+  e.setAttribute("cx", cx); e.setAttribute("cy", cy); e.setAttribute("r", r);
+  e.setAttribute("fill", fill || "#fff");
+  if (stroke && stroke !== "none") { e.setAttribute("stroke", stroke); e.setAttribute("stroke-width", "1.5"); }
   parent.appendChild(e);
 }
 function wrapText(parent, x, y, txt, maxW, size, fill) {
@@ -901,12 +975,16 @@ function alignSelection(how) {
 // canvas-level properties shown when nothing selected / 未选中时显示画面属性
 function renderCanvasProps(body) {
   const p = activePage();
+  const targetOpts = TARGETS.map(t => `<option ${project.target === t ? "selected" : ""}>${t}</option>`).join("");
   body.innerHTML =
+    `<div class="field"><label>🎯 目标平台 Target platform (给 AI 的提示)</label>` +
+    `<select id="cpTarget">${targetOpts}</select></div>` +
     `<div class="field"><label>当前页面 Current page</label><div>${escapeHtml(p.name)}${p.isHome ? " ★" : ""}</div></div>` +
-    `<div class="field"><label>画面尺寸 Canvas size (dp)</label>` +
+    `<div class="field"><label>画面尺寸 Canvas size (dp/px)</label>` +
     `<div class="row"><input type="text" id="cpW" value="${p.canvasW}"> × <input type="text" id="cpH" value="${p.canvasH}"></div></div>` +
     `<p class="empty-hint">从工具栏拖拽元素到画布。<br>Drag elements from the toolbar onto the canvas.<br><br>` +
     `选中元素后在此编辑。<br>Select an element to edit it.</p>`;
+  $("#cpTarget").onchange = (e) => { project.target = e.target.value; save(); };
   $("#cpW").onchange = (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(v, p.canvasH); };
   $("#cpH").onchange = (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(p.canvasW, v); };
 }
@@ -997,13 +1075,16 @@ canvas.addEventListener("drop", (e) => {
 function addElement(type, x, y) {
   const d = DEFAULTS[type];
   if (!d) return;
+  let w = d.w, h = d.h, ex = clamp(x - w / 2, 0, cw() - w), ey = clamp(y - h / 2, 0, ch() - h);
+  // structural elements snap into place / 结构性元素自动吸附
+  if (type === "topbar")      { w = cw(); ex = 0; ey = 0; }
+  else if (type === "bottombar") { w = cw(); ex = 0; ey = ch() - h; }
+  else if (type === "divider")   { w = Math.min(cw(), 240); ex = clamp(x - w / 2, 0, cw() - w); }
+  else if (type === "fab")    { ex = clamp(cw() - w - 16, 0, cw() - w); ey = clamp(ch() - h - 16, 0, ch() - h); }
   const el = {
-    id: nextId("e"), type,
-    x: clamp(x - d.w / 2, 0, cw() - d.w),
-    y: clamp(y - d.h / 2, 0, ch() - d.h),
-    w: d.w, h: d.h,
+    id: nextId("e"), type, x: ex, y: ey, w, h,
     text: d.text, note: "", textPos: null,
-    color: $("#fillColor").value,
+    color: d.color || $("#fillColor").value,
     opacity: parseFloat($("#opacity").value),
     linkTo: null, ref: null, groupId: null,
   };
@@ -1329,12 +1410,13 @@ function emitEl(el, ind) {
 
 function buildMarkdown() {
   let md = "";
-  md += "# Android UI Design / 安卓界面设计\n\n";
-  md += "> 由 easy-xml 生成的界面草图。请据此实现 Android UI。\n";
-  md += "> UI sketch generated by easy-xml. Please implement the Android UI accordingly.\n\n";
+  md += "# UI Design / 界面设计\n\n";
 
+  const target = project.target || "Android";
+  md += `<!-- [TARGET: ${target}] -->\n`;
   const home = project.pages.find(p => p.isHome);
-  if (home) md += `<!-- [HOME: ${home.name}] -->\n\n`;
+  if (home) md += `<!-- [HOME: ${home.name}] -->\n`;
+  md += "\n";
 
   project.pages.forEach(p => {
     md += `<!-- [PAGE: ${p.name}] -->\n`;
@@ -1378,6 +1460,8 @@ function parseMarkdown(md) {
   const id = (pre) => pre + (++n);
   const linkFix = [], refFix = [];
 
+  const targetM = md.match(/\[TARGET:\s*([^\]]*)\]/);
+  proj.target = targetM ? targetM[1].trim() : "Android";
   const homeM = md.match(/\[HOME:\s*([^\]]*)\]/);
   const homeName = homeM ? homeM[1].trim() : null;
 

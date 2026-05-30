@@ -39,7 +39,12 @@ project = { pages:[ { id, name, isHome, canvasW, canvasH,
   elements:[ {id,type,x,y,w,h,text,textPos,note,color,opacity,linkTo,ref,groupId} ],
   memos:[ {id,x,y,w,h,text} ] } ], activePageId, seq }
 ```
-- 元素类型 element types: `rect` | `textfield` | `button` | `list` | `include`（`ref`=被嵌入页面 id）
+- 元素类型 element types（**通用命名**，非 Material 专有，适用于 Web/iOS/Desktop）:
+  `text` | `rect`(Frame) | `image` | `icon` | `button` | `textfield` | `toggle` | `divider` |
+  `card` | `list` | `topbar` | `bottombar` | `fab` | `include`（`ref`=被嵌入页面 id）
+- `project.target`：目标平台（Android/iOS/Web/Desktop/...），导出为 `<!-- [TARGET: …] -->`，仅作为给 AI 的上下文提示，元素词汇保持中立。
+- 结构性元素（topbar/bottombar/divider/fab）在 `addElement` 里自动吸附位置。`DEFAULTS[type].color` 可指定前景色（text/icon/fab 等）。
+- Markdown 顶部不再写"实现 Android UI"那两句套话（用户要求去掉）。
 - `groupId`：同值 = 同组（扁平标记，非嵌套）。
 - `textPos`：文本在框内的 9 宫格位置（tl/tc/tr/ml/mc/mr/bl/bc/br），见 `textXY()`/`TEXT_DEFAULT_POS`；rect/textfield/button 都渲染文本。双击元素可内联编辑文本（`editTextInline`）。导出属性 `textpos`。
 - localStorage key: `easy-xml-project-v1`

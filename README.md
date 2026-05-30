@@ -17,8 +17,12 @@ open index.html
 
 - **三种视图 Three views**: 🎨 设计 Visual / { } 代码 Code / ▶ 预览 Preview，工具栏一键切换。
   Switch between visual editing, an editable Markdown+XML code editor, and an interactive preview.
-- **绘制 Draw**: 矩形框 Frame / 输入框 Textfield / 按钮 Button / 列表 List
-  从工具栏拖拽到画布。Drag from the toolbar onto the canvas.
+- **绘制 Draw（通用控件 / generic, not Material-specific）**:
+  基础 Basic — Text / Frame / Image / Icon / Button / Textfield / Toggle / Divider；
+  组件 Components — Card / List / Top Bar / Bottom Bar / FAB / Include。
+  从工具栏拖拽到画布。Drag from the toolbar onto the canvas. 元素词汇中立，可用于 Android / iOS / Web / Desktop。
+- **🎯 目标平台 Target**: 选择 Android/iOS/Web/Desktop，作为提示写进导出的 Markdown（`<!-- [TARGET: …] -->`）。
+  Pick a target platform; it's written into the exported Markdown as a hint for the AI.
 - **样式 Style**: 颜色 + 透明度 / color + opacity.
 - **📝 元素注释 Element note**: 每个元素可写说明，导出为该元素上方的 XML 注释行（AI 易读）。
   Per-element description, exported as an XML comment line above the element.
