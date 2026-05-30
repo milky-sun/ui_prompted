@@ -457,7 +457,11 @@ function nextId(prefix) {
 }
 
 // ---- Persistence / 持久化 (localStorage) ----
-function save() {
+const PREFS_KEY = "easy-xml-prefs-v1";
+let saveTimer = null;
+function save() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300); }  // debounced
+function saveNow() {
+  clearTimeout(saveTimer); saveTimer = null;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(project)); }
   catch (e) { console.warn("save failed", e); }
 }
@@ -468,6 +472,26 @@ function load() {
   } catch (e) { console.warn("load failed", e); }
   return false;
 }
+// ---- UI preferences (separate from the project) / 界面偏好（与项目分开） ----
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      snapGrid, zoom, zoomFit, memoVisible,
+      collapsed: document.body.classList.contains("tb-collapsed"),
+    }));
+  } catch (e) {}
+}
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+    if (typeof p.snapGrid === "boolean") snapGrid = p.snapGrid;
+    if (typeof p.memoVisible === "boolean") memoVisible = p.memoVisible;
+    if (typeof p.zoomFit === "boolean") zoomFit = p.zoomFit;
+    if (typeof p.zoom === "number") zoom = p.zoom;
+    if (p.collapsed) document.body.classList.add("tb-collapsed");
+  } catch (e) {}
+}
+window.addEventListener("beforeunload", saveNow);   // flush pending save / 退出前落盘
 
 // ---- Undo / Redo history / 撤销·重做历史 ----
 const undoStack = [], redoStack = [];
@@ -613,12 +637,27 @@ function makeSpan(cls, text) { const s = document.createElement("span"); s.class
 function openPageMenu(p, x, y) {
   openPopmenu(x, y, [
     { label: "✎ Rename", action: () => { renamingPageId = p.id; render(); } },
+    { label: "⧉ Duplicate", action: () => duplicatePage(p) },
     { label: "★ Set as Home", disabled: p.isHome, action: () => {
         snapshot(); project.pages.forEach(x => x.isHome = false); p.isHome = true; render();
       } },
     { sep: true },
     { label: "🗑 Delete", danger: true, disabled: project.pages.length === 1, action: () => deletePage(p) },
   ]);
+}
+function duplicatePage(p) {
+  snapshot();
+  const np = JSON.parse(JSON.stringify(p));
+  np.id = nextId("p"); np.isHome = false; np.name = p.name + " copy";
+  const gmap = {};
+  (np.elements || []).forEach(e => {
+    e.id = nextId("e");
+    if (e.groupId) { if (!gmap[e.groupId]) gmap[e.groupId] = nextId("g"); e.groupId = gmap[e.groupId]; }
+  });
+  (np.memos || []).forEach(m => m.id = nextId("m"));
+  project.pages.splice(project.pages.indexOf(p) + 1, 0, np);
+  project.activePageId = np.id; clearSel(); render();
+  toast("Page duplicated");
 }
 function deletePage(p) {
   if (project.pages.length === 1) return;
@@ -677,6 +716,11 @@ function renderCanvas() {
   page.elements.forEach(el => elLayer.appendChild(buildElement(el)));
   memoLayer.style.display = memoVisible ? "" : "none";
   page.memos.forEach(m => memoLayer.appendChild(buildMemo(m)));
+
+  // empty-canvas hint / 空画布提示
+  if (!page.elements.length && !page.memos.length && mode === "visual") {
+    label(overlay, W / 2, H / 2, "Drag an element here", "#c4c9d2", 16, "middle");
+  }
 
   if (selection.ids.length && mode !== "preview") {
     const objs = selObjs();
@@ -1311,6 +1355,15 @@ function addMemo(x, y) {
 let drag = null;   // move / resize
 let band = null;   // rubber-band selection / 框选
 
+// coalesce drag re-renders to one per animation frame / 把拖拽重绘合并到每帧一次
+let rafPending = false, pendingOverlay = null;
+function scheduleCanvas(overlayFn) {
+  pendingOverlay = overlayFn || null;
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; renderCanvas(); if (pendingOverlay) pendingOverlay(); });
+}
+
 // expand an element id to its whole group (or just itself) / 展开到整组
 function groupMates(id) {
   const el = activePage().elements.find(x => x.id === id);
@@ -1385,7 +1438,7 @@ canvas.addEventListener("pointermove", (e) => {
     const ids = band.base.slice();
     hit.forEach(m => { if (ids.indexOf(m) < 0) ids.push(m); });
     setSel("el", ids);
-    renderCanvas(); drawBand(bx, by, bw, bh);
+    scheduleCanvas(() => drawBand(bx, by, bw, bh));
     return;
   }
   if (!drag) return;
@@ -1405,14 +1458,13 @@ canvas.addEventListener("pointermove", (e) => {
       it.o.x = clamp(it.ox + ndx, 0, cw() - it.o.w);
       it.o.y = clamp(it.oy + ndy, 0, ch() - it.o.h);
     });
-    renderCanvas();
-    snap.guides.forEach(drawGuide);
+    scheduleCanvas(() => snap.guides.forEach(drawGuide));
   } else if (drag.mode === "resize") {
     let w = drag.ow + dx, h = drag.oh + dy;
     if (snapGrid) { w = Math.round(w / GRID) * GRID; h = Math.round(h / GRID) * GRID; }
     drag.obj.w = clamp(w, 24, cw() - drag.obj.x);
     drag.obj.h = clamp(h, 20, ch() - drag.obj.y);
-    renderCanvas();
+    scheduleCanvas();
   }
 });
 
@@ -1470,6 +1522,26 @@ canvas.addEventListener("dblclick", (e) => {
   editTextInline(el);
 });
 
+// right-click an element → context menu (reuses the popup menu) / 右键元素 → 上下文菜单
+canvas.addEventListener("contextmenu", (e) => {
+  if (mode !== "visual") return;
+  const g = e.target.closest(".el");
+  if (!g) return;
+  e.preventDefault();
+  const id = g.dataset.id;
+  if (!(selection.kind === "el" && isSel(id))) { setSel("el", groupMates(id)); renderCanvas(); renderProps(); }
+  openPopmenu(e.clientX, e.clientY, [
+    { label: "Copy", action: copySel },
+    { label: "Duplicate", action: duplicateSel },
+    ...(clipboard.length ? [{ label: "Paste", action: pasteSel }] : []),
+    { sep: true },
+    { label: "Bring to front", action: () => reorder("front") },
+    { label: "Send to back", action: () => reorder("back") },
+    { sep: true },
+    { label: "Delete", danger: true, action: deleteSelected },
+  ]);
+});
+
 let inlineEditor = null;
 function editTextInline(el) {
   if (inlineEditor) inlineEditor.remove();
@@ -1524,11 +1596,11 @@ function applyZoom() {
   const zv = $("#zVal"); if (zv) zv.value = Math.round(zoom * 100);
   const zf = $("#zFit"); if (zf) zf.classList.toggle("active", zoomFit);
 }
-function setZoom(z) { zoomFit = false; zoom = clamp(z, 0.1, 4); applyZoom(); }
+function setZoom(z) { zoomFit = false; zoom = clamp(z, 0.1, 4); applyZoom(); savePrefs(); }
 
 $("#zOut").onclick = () => setZoom(Math.round((zoom - 0.1) * 10) / 10);
 $("#zIn").onclick = () => setZoom(Math.round((zoom + 0.1) * 10) / 10);
-$("#zFit").onclick = () => { zoomFit = true; applyZoom(); };
+$("#zFit").onclick = () => { zoomFit = true; applyZoom(); savePrefs(); };
 $("#zVal").onchange = (e) => { const v = parseInt(e.target.value); if (v) setZoom(v / 100); };
 window.addEventListener("resize", () => { if (zoomFit) applyZoom(); });
 
@@ -1556,13 +1628,13 @@ document.addEventListener("click", (e) => {
   } else if (act === "foldmemo") {
     memoVisible = !memoVisible;
     $("#toggleMemo").classList.toggle("active", !memoVisible);
-    renderCanvas();
+    renderCanvas(); savePrefs();
   } else if (act === "toggletb") {
     toggleToolbar();
   } else if (act === "snap") {
     snapGrid = !snapGrid;
     $("#snapBtn").classList.toggle("active", snapGrid);
-    toast(snapGrid ? "Snap on" : "Snap off");
+    toast(snapGrid ? "Snap on" : "Snap off"); savePrefs();
   }
 });
 
@@ -1574,6 +1646,7 @@ function toggleToolbar() {
   btn.textContent = collapsed ? "▼" : "▲";
   btn.title = collapsed ? "Expand toolbar" : "Collapse toolbar";
   if (zoomFit) applyZoom();   // layout changed → refit / 布局变化后重新适应
+  savePrefs();
 }
 
 // canvas size controls / 画面尺寸控件
@@ -1940,6 +2013,11 @@ buildCanvasPresets();
 if (!load()) freshProject();
 if (!project.pages || !project.pages.length) freshProject();
 migrate();
+loadPrefs();
+// apply restored UI prefs / 应用恢复的界面偏好
+$("#snapBtn").classList.toggle("active", snapGrid);
+$("#toggleMemo").classList.toggle("active", !memoVisible);
+if (document.body.classList.contains("tb-collapsed")) { $("#tbToggle").textContent = "▼"; $("#tbToggle").title = "Expand toolbar"; }
 document.querySelector('[data-mode="visual"]').classList.add("active");
 render();
 </script>

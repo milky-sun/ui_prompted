@@ -41,7 +41,11 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 - **z-order**: `reorder(front|back|forward|backward)` 直接重排 `page.elements`（数组序=绘制序）。无图层面板（用户要求），分组为主要组织手段。
 - **吸附 snap**: `snapGrid`(默认开)+`GRID=8`。`smartSnap()` 把选区外框吸附到其他元素的边/中心和画布 0/中/满；命中画 `drawGuide()` 粉色参考线（`pointerup` 随 overlay 清除）；未命中则网格取整。缩放仅网格取整。工具栏 `data-act="snap"` 切换。
 - **快捷键（Mac/Win 双支持，`metaKey||ctrlKey`）**: Undo `Z`／Redo `⇧Z`·`Y`／Copy `C`／Paste `V`／Duplicate `D`／全选 `A`／编组 `G`·解组 `⇧G`／层级 `]`前 `[`后（`⇧`=置顶/置底）／方向键 1px·`⇧`+方向键 10px／Delete。**仅在 visual 模式且非输入聚焦时生效**（code 模式交给浏览器原生）。
-- **页面菜单 page menu**: PAGES 的 `⋯` 改用非阻塞弹出菜单 `openPopmenu()`（Rename/Set as Home/Delete），不再用 `prompt/confirm`。Rename 为列表内联输入（`renamingPageId`）；Delete 直接删（有 Undo，提示 ⌘/Ctrl+Z）。**今后避免用 alert/prompt/confirm 打断用户**，优先弹出菜单/内联编辑。
+- **页面菜单 page menu**: PAGES 的 `⋯` 改用非阻塞弹出菜单 `openPopmenu()`（Rename/Duplicate/Set as Home/Delete），不再用 `prompt/confirm`。Rename 为列表内联输入（`renamingPageId`）；Delete 直接删（有 Undo，提示 ⌘/Ctrl+Z）。Duplicate 见 `duplicatePage()`（深拷贝+重映射 id/groupId）。**今后避免用 alert/prompt/confirm 打断用户**，优先弹出菜单/内联编辑。
+- **右键菜单 context menu**: 画布右键元素 → `openPopmenu()`（Copy/Duplicate/Paste/置顶/置底/Delete），复用同一弹出菜单。
+- **性能 perf**: 拖拽重绘用 `scheduleCanvas()`（requestAnimationFrame 每帧合并一次）；`save()` 防抖 300ms（`saveNow()` 立即落盘，`beforeunload` flush）。**保持轻量，避免大改/卡顿**。
+- **界面偏好 prefs**: `snapGrid/zoom/zoomFit/memoVisible/折叠状态` 存 `PREFS_KEY="easy-xml-prefs-v1"`（与项目 JSON 分开），`savePrefs/loadPrefs`，启动时应用。
+- **空画布提示**: 无元素无 memo 时画 "Drag an element here"（overlay 文本）。
 - **小窗适配 small viewport**: 工具栏可折叠（`body.tb-collapsed` → 隐藏 `#toolbar`，显示细条 `#tbMini`，含 ☰ 展开 + 视图切换）。工具栏点击监听挂在 `document` 上，使折叠后的细条按钮也生效。
 - **缩放 zoom**: `zoom` + `zoomFit`（默认自动适应）。`fitZoom()` 按 `#stage` 可用区域计算（上限 100%，不放大）。`applyZoom()` 只改 SVG width/height（viewBox 不变），故拖拽/落点的 `scale = rect.width/cw()` 自动跟随缩放，无需额外换算。右下角浮动 `#zoombar`：− / % 输入 / ＋ / 适应。`window resize` 时若 fit 则重算。
 
