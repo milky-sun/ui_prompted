@@ -7,10 +7,13 @@
 - 所有记忆只保存在本文件夹内。All memory stays inside this folder.
 - Git 版本管理，使用项目独立账户（非全局）。Per-project git account (not global):
   - `milky-sun` / `c21uhs016@gmail.com`
-- 项目语言：中文 + 英文。Project language: Chinese + English.
+- 项目语言：代码注释可中英；但 **UI 显示一律英文（不出现中文）**。
+  Project language: comments may be CN+EN, but **the UI is English-only** (decided 2026-05-30, supersedes the old "CN+EN UI" rule).
 
 ## 工作习惯 / Working preferences
 - **不要自动用浏览器打开 `index.html`**，用户会自己打开/刷新。Do NOT auto-run `open index.html`; the user opens it themselves.
+- **UI 文案只用英文**。新增按钮/标签/toast/prompt 等界面文字一律英文，不要再写中文。
+  All NEW user-facing UI text (buttons, labels, toasts, prompts) must be English only.
 
 ## 目标 / Goal
 为 Android UI 建模做一个轻量草图工具：快速绘制 + 写描述 → 输出可直接喂给 AI 的 Markdown。
