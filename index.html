@@ -427,6 +427,17 @@ function buildElement(el) {
     }
   }
 
+  // note badge / 注释标记
+  if (el.note && el.note.trim()) {
+    const n = document.createElementNS(SVGNS, "text");
+    n.setAttribute("x", 5); n.setAttribute("y", 15);
+    n.setAttribute("font-size", "12"); n.setAttribute("fill", "#caa53a");
+    n.textContent = "📝";
+    const ttl = document.createElementNS(SVGNS, "title");
+    ttl.textContent = el.note;
+    n.appendChild(ttl);
+    g.appendChild(n);
+  }
   // link badge / 链接标记
   if (el.linkTo) {
     const t = document.createElementNS(SVGNS, "text");
@@ -556,6 +567,8 @@ function renderProps() {
   body.innerHTML =
     `<div class="field"><label>类型 Type</label><div>${obj.type}</div></div>` +
     `<div class="field"><label>文本 Text</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>` +
+    `<div class="field"><label>📝 注释 Note (给 AI 的说明 / description for AI)</label>` +
+    `<textarea id="pNote" placeholder="例: 这是主登录按钮，点击后校验邮箱…">${escapeHtml(obj.note || "")}</textarea></div>` +
     `<div class="field row"><div><label>颜色 Color</label><input type="color" id="pColor" value="${obj.color || "#ffffff"}"></div>` +
     `<div style="flex:1"><label>透明度 Opacity</label><input type="range" id="pOp" min="0" max="1" step="0.05" value="${obj.opacity != null ? obj.opacity : 1}"></div></div>` +
     `<div class="field row">` +
@@ -568,6 +581,7 @@ function renderProps() {
     `<button class="btn-danger" id="pDelete">删除 Delete</button>`;
 
   $("#pText").oninput = (e) => { obj.text = e.target.value; renderCanvas(); save(); };
+  $("#pNote").oninput = (e) => { obj.note = e.target.value; renderCanvas(); save(); };
   $("#pColor").oninput = (e) => { obj.color = e.target.value; renderCanvas(); save(); };
   $("#pOp").oninput = (e) => { obj.opacity = parseFloat(e.target.value); renderCanvas(); save(); };
   ["W","H","X","Y"].forEach(k => {
@@ -616,6 +630,7 @@ function addElement(type, x, y) {
     y: clamp(y - d.h / 2, 0, 720 - d.h),
     w: d.w, h: d.h,
     text: d.text,
+    note: "",
     color: $("#fillColor").value,
     opacity: parseFloat($("#opacity").value),
     linkTo: null,
@@ -730,10 +745,13 @@ document.getElementById("toolbar").addEventListener("click", (e) => {
     selectedId = null;
     render();
     toast(previewMode ? "预览模式：点击带🔗的元素跳转 / Preview: click 🔗 elements to jump" : "编辑模式 / Edit mode");
-  } else if (act === "closemodal") {
-    $("#modal-bg").style.display = "none";
   }
 });
+
+// ---- close modal / 关闭弹窗 (button is outside #toolbar, bind separately) ----
+function closeModal() { $("#modal-bg").style.display = "none"; }
+document.querySelectorAll('[data-act="closemodal"]').forEach(b => b.addEventListener("click", closeModal));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
 // ---- delete key / 删除键 ----
 document.addEventListener("keydown", (e) => {
@@ -805,6 +823,11 @@ function buildMarkdown() {
       ];
       if (el.text) attrs.push(`text="${esc(el.text)}"`);
       if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
+      // per-element note as a comment line directly above (easy for AI to read)
+      // 每个元素的注释作为紧邻其上的注释行，便于 AI 阅读
+      if (el.note && el.note.trim()) {
+        md += `  <!-- ${el.note.replace(/\r?\n/g, " ").replace(/--+/g, "—").trim()} -->\n`;
+      }
       md += `  <${el.type} ${attrs.join(" ")}/>\n`;
     });
     md += `</screen>\n`;
