@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<!--
+  easy-xml — Android UI 草图工具 / Android UI sketch tool
+  单页 HTML，无需构建。在浏览器中打开即可使用。
+  Single-page HTML, no build step. Just open in a browser.
+-->
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>easy-xml · Android UI Sketch</title>
+<style>
+  :root {
+    --bg: #1e1f24;
+    --panel: #26282f;
+    --panel-2: #2e3038;
+    --border: #3a3d47;
+    --text: #e6e7ea;
+    --muted: #9aa0ad;
+    --accent: #5b9dff;
+    --accent-2: #ffce5b;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* ---- Toolbar / 工具栏 ---- */
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    border-right: 1px solid var(--border);
+  }
+  .group:last-child { border-right: none; }
+  .group-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-right: 4px;
+  }
+  button.tool, .tool {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  button.tool:hover, .tool:hover { border-color: var(--accent); }
+  .tool.draw { cursor: grab; }
+  .tool.draw:active { cursor: grabbing; }
+  .tool.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tool.vibe { background: #4a431f; border-color: var(--accent-2); color: var(--accent-2); }
+  .tool.active { outline: 2px solid var(--accent); }
+  input[type=color] { width: 30px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: none; padding: 0; cursor: pointer; }
+  input[type=range] { width: 80px; }
+  /* ---- Main layout / 主布局 ---- */
+  #main { flex: 1; display: flex; min-height: 0; }
+  /* Page list / 页面列表 */
+  #pages {
+    width: 180px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 8px;
+    flex-shrink: 0;
+  }
+  #pages h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; margin: 4px 4px 8px; letter-spacing: .5px; }
+  .page-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-bottom: 4px;
+    border: 1px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .page-item:hover { background: var(--panel-2); }
+  .page-item.active { background: var(--panel-2); border-color: var(--accent); }
+  .page-item .home-dot { color: var(--accent-2); font-size: 11px; }
+  .page-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page-item .pgmenu { color: var(--muted); font-size: 14px; padding: 0 2px; }
+  .page-item .pgmenu:hover { color: var(--text); }
+  /* Canvas / 画布 */
+  #stage {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 32px;
+    background:
+      linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px),
+      linear-gradient(rgba(255,255,255,.02) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  #phone {
+    background: #11131a;
+    border-radius: 28px;
+    padding: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  }
+  svg#canvas { background: #fafafa; border-radius: 16px; display: block; }
+  /* Properties / 属性面板 */
+  #props {
+    width: 240px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    padding: 12px;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  #props h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; margin: 0 0 10px; letter-spacing: .5px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .field input[type=text], .field textarea, .field select {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 6px 8px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .field textarea { resize: vertical; min-height: 60px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .empty-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .btn-danger { background: #3a2326; color: var(--danger); border: 1px solid var(--danger); border-radius: 6px; padding: 7px; width: 100%; cursor: pointer; font-size: 12px; }
+  .btn-danger:hover { background: var(--danger); color: #fff; }
+  /* SVG element styling */
+  .el { cursor: move; }
+  .el.preview-link { cursor: pointer; }
+  .sel-outline { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
+  .resize-handle { fill: var(--accent); cursor: nwse-resize; }
+  .memo-card { cursor: move; }
+  /* Modal / 弹窗 */
+  #modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 100; }
+  #modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: 720px; max-width: 92vw; max-height: 86vh; display: flex; flex-direction: column; }
+  #modal header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #modal header h2 { margin: 0; font-size: 15px; }
+  #modal .body { padding: 16px; overflow: auto; }
+  #modal textarea { width: 100%; height: 50vh; background: #15161b; color: #d7dbe2; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5; }
+  #modal footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ======== Toolbar / 工具栏 ======== -->
+<div id="toolbar">
+  <div class="group">
+    <span class="group-label">控制 Control</span>
+    <button class="tool" data-act="newpage">＋ 新页 New</button>
+    <button class="tool" data-act="import">导入 Import</button>
+    <button class="tool" data-act="export">导出 Export</button>
+    <button class="tool primary" data-act="markdown">⤴ Markdown</button>
+  </div>
+
+  <div class="group">
+    <span class="group-label">绘制 Draw</span>
+    <div class="tool draw" draggable="true" data-type="rect">▭ 框 Frame</div>
+    <div class="tool draw" draggable="true" data-type="textfield">▭ 输入 Textfield</div>
+    <div class="tool draw" draggable="true" data-type="button">▢ 按钮 Button</div>
+    <div class="tool draw" draggable="true" data-type="list">☰ 列表 List</div>
+  </div>
+
+  <div class="group">
+    <span class="group-label">样式 Style</span>
+    <input type="color" id="fillColor" value="#ffffff" title="颜色 Color">
+    <input type="range" id="opacity" min="0" max="1" step="0.05" value="1" title="透明度 Opacity">
+  </div>
+
+  <div class="group">
+    <span class="group-label">注释 Annotate</span>
+    <div class="tool vibe draw" draggable="true" data-type="memo">💭 Vibe Memo</div>
+    <button class="tool" data-act="link">🔗 Link</button>
+    <button class="tool" id="toggleMemo" data-act="foldmemo">👁 折叠备忘 Memos</button>
+  </div>
+
+  <div class="group">
+    <span class="group-label">模式 Mode</span>
+    <button class="tool" id="previewBtn" data-act="preview">▶ 预览 Preview</button>
+  </div>
+</div>
+
+<!-- ======== Main / 主区域 ======== -->
+<div id="main">
+  <!-- Page list / 页面列表 -->
+  <div id="pages">
+    <h3>页面 Pages</h3>
+    <div id="pageList"></div>
+  </div>
+
+  <!-- Canvas / 画布 -->
+  <div id="stage">
+    <div id="phone">
+      <svg id="canvas" width="360" height="720" viewBox="0 0 360 720">
+        <g id="elLayer"></g>
+        <g id="memoLayer"></g>
+        <g id="overlay"></g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Properties / 属性面板 -->
+  <div id="props">
+    <h3>属性 Properties</h3>
+    <div id="propBody">
+      <p class="empty-hint">
+        从工具栏拖拽元素到画布。<br>
+        Drag elements from the toolbar onto the canvas.<br><br>
+        选中元素后在此编辑。<br>
+        Select an element to edit it here.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ======== Modal / 弹窗 ======== -->
+<div id="modal-bg">
+  <div id="modal">
+    <header>
+      <h2 id="modalTitle">Markdown</h2>
+      <button class="tool" data-act="closemodal">✕</button>
+    </header>
+    <div class="body">
+      <textarea id="modalText" spellcheck="false"></textarea>
+    </div>
+    <footer id="modalFooter"></footer>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+
+<script>
+"use strict";
+// ====================================================================
+// easy-xml — state & logic / 状态与逻辑
+// ====================================================================
+const STORE_KEY = "easy-xml-project-v1";
+
+// Default element sizes / 默认尺寸
+const DEFAULTS = {
+  rect:      { w: 200, h: 130, text: "" },
+  textfield: { w: 240, h: 46,  text: "Input..." },
+  button:    { w: 140, h: 46,  text: "Button" },
+  list:      { w: 260, h: 220, text: "Item" },
+};
+
+let project = null;   // { pages: [...], activePageId, seq }
+let selectedId = null;
+let selectedKind = null; // 'el' | 'memo'
+let memoVisible = true;
+let previewMode = false;
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const $ = (sel) => document.querySelector(sel);
+const canvas = $("#canvas");
+const elLayer = $("#elLayer");
+const memoLayer = $("#memoLayer");
+const overlay = $("#overlay");
+
+// ---- ID / 唯一ID ----
+function nextId(prefix) {
+  project.seq = (project.seq || 0) + 1;
+  return prefix + project.seq;
+}
+
+// ---- Persistence / 持久化 (localStorage) ----
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(project)); }
+  catch (e) { console.warn("save failed", e); }
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) { project = JSON.parse(raw); return true; }
+  } catch (e) { console.warn("load failed", e); }
+  return false;
+}
+function activePage() {
+  return project.pages.find(p => p.id === project.activePageId) || project.pages[0];
+}
+
+// ---- Init / 初始化 ----
+function freshProject() {
+  project = { pages: [], activePageId: null, seq: 0 };
+  const p = createPage("Home");
+  p.isHome = true;
+  project.activePageId = p.id;
+}
+function createPage(name) {
+  const p = { id: nextId("p"), name: name || ("Page " + (project.pages.length + 1)), isHome: false, elements: [], memos: [] };
+  project.pages.push(p);
+  return p;
+}
+
+// ====================================================================
+// Rendering / 渲染
+// ====================================================================
+function render() {
+  renderPageList();
+  renderCanvas();
+  renderProps();
+  save();
+}
+
+function renderPageList() {
+  const list = $("#pageList");
+  list.innerHTML = "";
+  project.pages.forEach(p => {
+    const div = document.createElement("div");
+    div.className = "page-item" + (p.id === project.activePageId ? " active" : "");
+    div.innerHTML =
+      `<span class="home-dot">${p.isHome ? "★" : ""}</span>` +
+      `<span class="name">${escapeHtml(p.name)}</span>` +
+      `<span class="pgmenu" data-pgact="menu" title="操作 Menu">⋯</span>`;
+    div.querySelector(".name").onclick = () => { project.activePageId = p.id; selectedId = null; render(); };
+    div.querySelector(".home-dot").onclick = () => { project.activePageId = p.id; selectedId = null; render(); };
+    div.querySelector(".pgmenu").onclick = (e) => { e.stopPropagation(); pageMenu(p); };
+    list.appendChild(div);
+  });
+}
+
+function pageMenu(p) {
+  const action = prompt(
+    `页面 Page: "${p.name}"\n\n` +
+    `输入操作 / Type an action:\n` +
+    `  r = 重命名 Rename\n` +
+    `  h = 设为入口 Set as Home\n` +
+    `  d = 删除 Delete`, "");
+  if (action === null) return;
+  const a = action.trim().toLowerCase();
+  if (a === "r") {
+    const n = prompt("新名称 / New name:", p.name);
+    if (n) { p.name = n.trim(); render(); }
+  } else if (a === "h") {
+    project.pages.forEach(x => x.isHome = false);
+    p.isHome = true; render();
+  } else if (a === "d") {
+    if (project.pages.length === 1) { toast("至少保留一个页面 / Keep at least one page"); return; }
+    if (confirm(`删除 "${p.name}"? / Delete?`)) {
+      project.pages = project.pages.filter(x => x.id !== p.id);
+      // clear links pointing here / 清除指向该页的链接
+      project.pages.forEach(pg => pg.elements.forEach(el => { if (el.linkTo === p.id) el.linkTo = null; }));
+      if (project.activePageId === p.id) project.activePageId = project.pages[0].id;
+      if (!project.pages.some(x => x.isHome)) project.pages[0].isHome = true;
+      render();
+    }
+  }
+}
+
+function renderCanvas() {
+  const page = activePage();
+  elLayer.innerHTML = "";
+  memoLayer.innerHTML = "";
+  overlay.innerHTML = "";
+
+  // Elements / 元素
+  page.elements.forEach(el => elLayer.appendChild(buildElement(el)));
+  // Memos / 备忘 (separate layer, foldable)
+  memoLayer.style.display = memoVisible ? "" : "none";
+  page.memos.forEach(m => memoLayer.appendChild(buildMemo(m)));
+
+  // Selection overlay / 选中框
+  if (selectedId && !previewMode) {
+    const obj = findSelected();
+    if (obj) drawSelection(obj.x, obj.y, obj.w || 200, obj.h || 80);
+  }
+}
+
+function buildElement(el) {
+  const g = document.createElementNS(SVGNS, "g");
+  g.setAttribute("class", "el" + (previewMode && el.linkTo ? " preview-link" : ""));
+  g.setAttribute("transform", `translate(${el.x},${el.y})`);
+  g.dataset.id = el.id;
+  g.dataset.kind = "el";
+
+  const stroke = "#3a3d47";
+  const op = el.opacity != null ? el.opacity : 1;
+
+  if (el.type === "rect") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
+  } else if (el.type === "textfield") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 6);
+    label(g, 12, el.h / 2 + 4, el.text || "Input...", "#8a8f99", 14, "start");
+  } else if (el.type === "button") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 22);
+    label(g, el.w / 2, el.h / 2 + 5, el.text || "Button", "#1d2330", 15, "middle", 600);
+  } else if (el.type === "list") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
+    const rows = Math.max(2, Math.floor(el.h / 44));
+    for (let i = 1; i < rows; i++) {
+      const ly = i * (el.h / rows);
+      line(g, 0, ly, el.w, ly, "#e3e3e3");
+    }
+    for (let i = 0; i < rows; i++) {
+      const ly = i * (el.h / rows) + (el.h / rows) / 2 + 4;
+      label(g, 14, ly, (el.text || "Item") + " " + (i + 1), "#4a4f59", 13, "start");
+    }
+  }
+
+  // link badge / 链接标记
+  if (el.linkTo) {
+    const t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("x", el.w - 6); t.setAttribute("y", 16);
+    t.setAttribute("text-anchor", "end"); t.setAttribute("font-size", "12");
+    t.setAttribute("fill", "#5b9dff"); t.textContent = "🔗";
+    g.appendChild(t);
+  }
+  return g;
+}
+
+function buildMemo(m) {
+  const g = document.createElementNS(SVGNS, "g");
+  g.setAttribute("class", "memo-card");
+  g.setAttribute("transform", `translate(${m.x},${m.y})`);
+  g.dataset.id = m.id;
+  g.dataset.kind = "memo";
+  const w = m.w || 180, h = m.h || 70;
+  rect(g, 0, 0, w, h, "#fff4c2", 0.96, "#d9b94a", 6);
+  // dog-ear / 折角
+  const corner = document.createElementNS(SVGNS, "path");
+  corner.setAttribute("d", `M${w-14},0 L${w},14 L${w-14},14 Z`);
+  corner.setAttribute("fill", "#e0c45a");
+  g.appendChild(corner);
+  wrapText(g, 8, 18, m.text || "vibe...", w - 14, 13, "#5b4d12");
+  return g;
+}
+
+// ---- SVG helpers / SVG 辅助 ----
+function rect(parent, x, y, w, h, fill, op, stroke, r) {
+  const e = document.createElementNS(SVGNS, "rect");
+  e.setAttribute("x", x); e.setAttribute("y", y);
+  e.setAttribute("width", w); e.setAttribute("height", h);
+  e.setAttribute("rx", r || 0);
+  e.setAttribute("fill", fill || "#ffffff");
+  e.setAttribute("fill-opacity", op != null ? op : 1);
+  e.setAttribute("stroke", stroke || "#3a3d47");
+  e.setAttribute("stroke-width", "1.5");
+  parent.appendChild(e);
+}
+function label(parent, x, y, txt, fill, size, anchor, weight) {
+  const e = document.createElementNS(SVGNS, "text");
+  e.setAttribute("x", x); e.setAttribute("y", y);
+  e.setAttribute("fill", fill); e.setAttribute("font-size", size || 13);
+  e.setAttribute("text-anchor", anchor || "start");
+  if (weight) e.setAttribute("font-weight", weight);
+  e.setAttribute("font-family", "sans-serif");
+  e.textContent = txt;
+  parent.appendChild(e);
+}
+function line(parent, x1, y1, x2, y2, color) {
+  const e = document.createElementNS(SVGNS, "line");
+  e.setAttribute("x1", x1); e.setAttribute("y1", y1);
+  e.setAttribute("x2", x2); e.setAttribute("y2", y2);
+  e.setAttribute("stroke", color); e.setAttribute("stroke-width", "1");
+  parent.appendChild(e);
+}
+function wrapText(parent, x, y, txt, maxW, size, fill) {
+  const words = String(txt).split(/\s+/);
+  const charW = size * 0.6;
+  const perLine = Math.max(1, Math.floor(maxW / charW));
+  let line = "", ly = y, lines = 0;
+  const flush = () => {
+    const t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("x", x); t.setAttribute("y", ly);
+    t.setAttribute("font-size", size); t.setAttribute("fill", fill);
+    t.setAttribute("font-family", "sans-serif");
+    t.textContent = line;
+    parent.appendChild(t); ly += size + 3; lines++;
+  };
+  for (const w of words) {
+    if ((line + " " + w).trim().length > perLine && line) { flush(); line = w; }
+    else { line = (line + " " + w).trim(); }
+    if (lines >= 4) break;
+  }
+  if (line && lines < 5) flush();
+}
+
+function drawSelection(x, y, w, h) {
+  const o = document.createElementNS(SVGNS, "rect");
+  o.setAttribute("class", "sel-outline");
+  o.setAttribute("x", x - 2); o.setAttribute("y", y - 2);
+  o.setAttribute("width", w + 4); o.setAttribute("height", h + 4);
+  overlay.appendChild(o);
+  const hd = document.createElementNS(SVGNS, "rect");
+  hd.setAttribute("class", "resize-handle");
+  hd.setAttribute("x", x + w - 5); hd.setAttribute("y", y + h - 5);
+  hd.setAttribute("width", 12); hd.setAttribute("height", 12);
+  hd.setAttribute("rx", 2);
+  hd.dataset.handle = "resize";
+  overlay.appendChild(hd);
+}
+
+// ====================================================================
+// Properties panel / 属性面板
+// ====================================================================
+function findSelected() {
+  if (!selectedId) return null;
+  const page = activePage();
+  if (selectedKind === "memo") return page.memos.find(m => m.id === selectedId);
+  return page.elements.find(e => e.id === selectedId);
+}
+
+function renderProps() {
+  const body = $("#propBody");
+  const obj = findSelected();
+  if (!obj) {
+    body.innerHTML =
+      `<p class="empty-hint">从工具栏拖拽元素到画布。<br>Drag elements from the toolbar onto the canvas.<br><br>` +
+      `选中元素后在此编辑。<br>Select an element to edit it here.</p>`;
+    return;
+  }
+  if (selectedKind === "memo") {
+    body.innerHTML =
+      `<div class="field"><label>Vibe Memo (给 AI 的描述 / note for AI)</label>` +
+      `<textarea id="pMemoText">${escapeHtml(obj.text || "")}</textarea></div>` +
+      `<button class="btn-danger" id="pDelete">删除 Delete</button>`;
+    $("#pMemoText").oninput = (e) => { obj.text = e.target.value; renderCanvas(); save(); };
+    $("#pDelete").onclick = deleteSelected;
+    return;
+  }
+  // element / 元素
+  const pageOptions = project.pages
+    .filter(p => p.id !== activePage().id)
+    .map(p => `<option value="${p.id}" ${obj.linkTo === p.id ? "selected" : ""}>${escapeHtml(p.name)}</option>`)
+    .join("");
+  body.innerHTML =
+    `<div class="field"><label>类型 Type</label><div>${obj.type}</div></div>` +
+    `<div class="field"><label>文本 Text</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>` +
+    `<div class="field row"><div><label>颜色 Color</label><input type="color" id="pColor" value="${obj.color || "#ffffff"}"></div>` +
+    `<div style="flex:1"><label>透明度 Opacity</label><input type="range" id="pOp" min="0" max="1" step="0.05" value="${obj.opacity != null ? obj.opacity : 1}"></div></div>` +
+    `<div class="field row">` +
+    `<div><label>W</label><input type="text" id="pW" value="${Math.round(obj.w)}"></div>` +
+    `<div><label>H</label><input type="text" id="pH" value="${Math.round(obj.h)}"></div>` +
+    `<div><label>X</label><input type="text" id="pX" value="${Math.round(obj.x)}"></div>` +
+    `<div><label>Y</label><input type="text" id="pY" value="${Math.round(obj.y)}"></div></div>` +
+    `<div class="field"><label>🔗 链接到 Link to page</label>` +
+    `<select id="pLink"><option value="">— 无 None —</option>${pageOptions}</select></div>` +
+    `<button class="btn-danger" id="pDelete">删除 Delete</button>`;
+
+  $("#pText").oninput = (e) => { obj.text = e.target.value; renderCanvas(); save(); };
+  $("#pColor").oninput = (e) => { obj.color = e.target.value; renderCanvas(); save(); };
+  $("#pOp").oninput = (e) => { obj.opacity = parseFloat(e.target.value); renderCanvas(); save(); };
+  ["W","H","X","Y"].forEach(k => {
+    const inp = $("#p" + k);
+    inp.onchange = (e) => {
+      const v = parseFloat(e.target.value);
+      if (!isNaN(v)) { obj[k.toLowerCase()] = v; renderCanvas(); save(); }
+    };
+  });
+  $("#pLink").onchange = (e) => { obj.linkTo = e.target.value || null; renderCanvas(); save(); };
+  $("#pDelete").onclick = deleteSelected;
+}
+
+function deleteSelected() {
+  const page = activePage();
+  if (selectedKind === "memo") page.memos = page.memos.filter(m => m.id !== selectedId);
+  else page.elements = page.elements.filter(e => e.id !== selectedId);
+  selectedId = null; selectedKind = null;
+  render();
+}
+
+// ====================================================================
+// Interaction: drag from toolbar / 从工具栏拖拽
+// ====================================================================
+document.querySelectorAll(".tool.draw").forEach(t => {
+  t.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", t.dataset.type);
+  });
+});
+canvas.addEventListener("dragover", (e) => e.preventDefault());
+canvas.addEventListener("drop", (e) => {
+  e.preventDefault();
+  const type = e.dataTransfer.getData("text/plain");
+  if (!type) return;
+  const pt = clientToSvg(e.clientX, e.clientY);
+  if (type === "memo") addMemo(pt.x, pt.y);
+  else addElement(type, pt.x, pt.y);
+});
+
+function addElement(type, x, y) {
+  const d = DEFAULTS[type];
+  if (!d) return;
+  const el = {
+    id: nextId("e"), type,
+    x: clamp(x - d.w / 2, 0, 360 - d.w),
+    y: clamp(y - d.h / 2, 0, 720 - d.h),
+    w: d.w, h: d.h,
+    text: d.text,
+    color: $("#fillColor").value,
+    opacity: parseFloat($("#opacity").value),
+    linkTo: null,
+  };
+  activePage().elements.push(el);
+  selectedId = el.id; selectedKind = "el";
+  render();
+}
+
+function addMemo(x, y) {
+  const m = { id: nextId("m"), x: clamp(x - 90, 0, 360 - 180), y: clamp(y - 35, 0, 720 - 70), w: 180, h: 70, text: "" };
+  activePage().memos.push(m);
+  selectedId = m.id; selectedKind = "memo";
+  memoVisible = true;
+  render();
+}
+
+// ====================================================================
+// Interaction: move / resize on canvas / 画布上拖动与缩放
+// ====================================================================
+let drag = null; // { mode, id, kind, startX, startY, ox, oy, ow, oh }
+
+canvas.addEventListener("pointerdown", (e) => {
+  // resize handle / 缩放手柄
+  if (e.target.dataset && e.target.dataset.handle === "resize") {
+    const obj = findSelected();
+    if (!obj) return;
+    drag = { mode: "resize", obj, startX: e.clientX, startY: e.clientY, ow: obj.w, oh: obj.h };
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
+  const g = e.target.closest(".el, .memo-card");
+  if (!g) {
+    // click empty / 点击空白 → 取消选择
+    selectedId = null; selectedKind = null; renderCanvas(); renderProps();
+    return;
+  }
+  const id = g.dataset.id, kind = g.dataset.kind;
+
+  // preview mode: follow link / 预览模式跳转
+  if (previewMode) {
+    if (kind === "el") {
+      const el = activePage().elements.find(x => x.id === id);
+      if (el && el.linkTo && project.pages.some(p => p.id === el.linkTo)) {
+        project.activePageId = el.linkTo; selectedId = null; render();
+      }
+    }
+    return;
+  }
+
+  selectedId = id; selectedKind = kind;
+  const obj = findSelected();
+  drag = { mode: "move", obj, startX: e.clientX, startY: e.clientY, ox: obj.x, oy: obj.y };
+  canvas.setPointerCapture(e.pointerId);
+  renderCanvas(); renderProps();
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const scale = canvas.getBoundingClientRect().width / 360; // px → svg unit
+  const dx = (e.clientX - drag.startX) / scale;
+  const dy = (e.clientY - drag.startY) / scale;
+  if (drag.mode === "move") {
+    drag.obj.x = clamp(drag.ox + dx, 0, 360 - (drag.obj.w || 180));
+    drag.obj.y = clamp(drag.oy + dy, 0, 720 - (drag.obj.h || 70));
+  } else if (drag.mode === "resize") {
+    drag.obj.w = clamp(drag.ow + dx, 24, 360 - drag.obj.x);
+    drag.obj.h = clamp(drag.oh + dy, 20, 720 - drag.obj.y);
+  }
+  renderCanvas();
+});
+
+canvas.addEventListener("pointerup", (e) => {
+  if (drag) { drag = null; renderProps(); save(); }
+});
+
+// ---- coordinate conversion / 坐标转换 ----
+function clientToSvg(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  const scale = r.width / 360;
+  return { x: (cx - r.left) / scale, y: (cy - r.top) / scale };
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ====================================================================
+// Toolbar actions / 工具栏动作
+// ====================================================================
+document.getElementById("toolbar").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const act = btn.dataset.act;
+  if (act === "newpage") {
+    const name = prompt("新页面名称 / New page name:", "Page " + (project.pages.length + 1));
+    if (name !== null) { const p = createPage(name.trim() || undefined); project.activePageId = p.id; selectedId = null; render(); }
+  } else if (act === "export") {
+    exportJSON();
+  } else if (act === "import") {
+    $("#fileInput").click();
+  } else if (act === "markdown") {
+    showMarkdown();
+  } else if (act === "link") {
+    if (selectedKind === "el" && selectedId) { toast("在右侧面板选择目标页面 / Pick target page in the panel →"); $("#pLink") && $("#pLink").focus(); }
+    else toast("先选中一个元素 / Select an element first");
+  } else if (act === "foldmemo") {
+    memoVisible = !memoVisible;
+    $("#toggleMemo").classList.toggle("active", !memoVisible);
+    renderCanvas();
+  } else if (act === "preview") {
+    previewMode = !previewMode;
+    $("#previewBtn").classList.toggle("active", previewMode);
+    $("#previewBtn").textContent = previewMode ? "■ 编辑 Edit" : "▶ 预览 Preview";
+    selectedId = null;
+    render();
+    toast(previewMode ? "预览模式：点击带🔗的元素跳转 / Preview: click 🔗 elements to jump" : "编辑模式 / Edit mode");
+  } else if (act === "closemodal") {
+    $("#modal-bg").style.display = "none";
+  }
+});
+
+// ---- delete key / 删除键 ----
+document.addEventListener("keydown", (e) => {
+  if ((e.key === "Delete" || e.key === "Backspace") && selectedId && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+    e.preventDefault();
+    deleteSelected();
+  }
+});
+
+// ====================================================================
+// Import / Export JSON / 导入导出
+// ====================================================================
+function exportJSON() {
+  const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
+  download(blob, "easy-xml-project.json");
+  toast("已导出 JSON / Exported JSON");
+}
+$("#fileInput").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data.pages || !Array.isArray(data.pages)) throw new Error("invalid");
+      project = data;
+      if (!project.activePageId) project.activePageId = project.pages[0].id;
+      selectedId = null;
+      render();
+      toast("已导入 / Imported");
+    } catch (err) { toast("导入失败 / Import failed"); }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ====================================================================
+// Markdown export / 导出 Markdown (AI prompt)
+// ====================================================================
+function pageNameById(id) { const p = project.pages.find(x => x.id === id); return p ? p.name : "?"; }
+function esc(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;"); }
+function r(n) { return Math.round(n); }
+
+function buildMarkdown() {
+  let md = "";
+  md += "# Android UI Design / 安卓界面设计\n\n";
+  md += "> 由 easy-xml 生成的界面草图。请据此实现 Android UI。\n";
+  md += "> UI sketch generated by easy-xml. Please implement the Android UI accordingly.\n\n";
+
+  const home = project.pages.find(p => p.isHome);
+  if (home) md += `<!-- [HOME: ${home.name}] -->\n\n`;
+
+  project.pages.forEach(p => {
+    md += `<!-- [PAGE: ${p.name}] -->\n`;
+    md += `## ${p.name}${p.isHome ? " (Home)" : ""}\n\n`;
+    md += "```xml\n";
+    md += `<screen name="${esc(p.name)}"${p.isHome ? ' home="true"' : ""} width="360" height="720">\n`;
+    p.elements.forEach(el => {
+      const attrs = [
+        `x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`,
+        `color="${el.color}"`, `opacity="${el.opacity != null ? el.opacity : 1}"`,
+      ];
+      if (el.text) attrs.push(`text="${esc(el.text)}"`);
+      if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
+      md += `  <${el.type} ${attrs.join(" ")}/>\n`;
+    });
+    md += `</screen>\n`;
+    md += "```\n\n";
+
+    if (p.memos.length) {
+      md += `### 💭 Vibe Memos\n`;
+      p.memos.forEach(m => {
+        const t = (m.text || "").replace(/\n/g, " ").trim();
+        md += `- \`@(${r(m.x)},${r(m.y)})\` ${t || "(empty)"}\n`;
+      });
+      md += "\n";
+    }
+    const links = p.elements.filter(e => e.linkTo);
+    if (links.length) {
+      md += `### 🔗 Links\n`;
+      links.forEach(e => {
+        md += `- **${e.type}**${e.text ? ` "${e.text}"` : ""} → **${pageNameById(e.linkTo)}**\n`;
+      });
+      md += "\n";
+    }
+  });
+  return md;
+}
+
+function showMarkdown() {
+  const md = buildMarkdown();
+  $("#modalTitle").textContent = "Markdown (AI Prompt)";
+  $("#modalText").value = md;
+  const footer = $("#modalFooter");
+  footer.innerHTML =
+    `<button class="tool" id="mCopy">📋 复制 Copy</button>` +
+    `<button class="tool primary" id="mDownload">⬇ 下载 Download .md</button>`;
+  $("#mCopy").onclick = () => { copyText(md); };
+  $("#mDownload").onclick = () => { download(new Blob([md], { type: "text/markdown" }), "android-ui.md"); toast("已下载 / Downloaded"); };
+  $("#modal-bg").style.display = "flex";
+}
+
+function copyText(t) {
+  if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => toast("已复制 / Copied"), () => fallbackCopy(t));
+  else fallbackCopy(t);
+}
+function fallbackCopy(t) {
+  const ta = $("#modalText"); ta.select(); document.execCommand("copy"); toast("已复制 / Copied");
+}
+
+// ====================================================================
+// Misc / 杂项
+// ====================================================================
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+}
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+$("#modal-bg").addEventListener("click", (e) => { if (e.target.id === "modal-bg") $("#modal-bg").style.display = "none"; });
+
+// ====================================================================
+// Boot / 启动
+// ====================================================================
+if (!load()) freshProject();
+if (!project.pages || !project.pages.length) freshProject();
+render();
+</script>
+</body>
+</html>
