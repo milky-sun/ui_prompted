@@ -9,6 +9,9 @@
   - `milky-sun` / `c21uhs016@gmail.com`
 - 项目语言：中文 + 英文。Project language: Chinese + English.
 
+## 工作习惯 / Working preferences
+- **不要自动用浏览器打开 `index.html`**，用户会自己打开/刷新。Do NOT auto-run `open index.html`; the user opens it themselves.
+
 ## 目标 / Goal
 为 Android UI 建模做一个轻量草图工具：快速绘制 + 写描述 → 输出可直接喂给 AI 的 Markdown。
 A lightweight sketch tool for Android UI modeling: draw fast + add descriptions → output AI-ready Markdown.
