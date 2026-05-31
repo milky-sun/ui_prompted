@@ -651,7 +651,12 @@ function openPageMenu(p, x, y) {
 function duplicatePage(p) {
   snapshot();
   const np = JSON.parse(JSON.stringify(p));
-  np.id = nextId("p"); np.isHome = false; np.name = p.name + " copy";
+  np.id = nextId("p"); np.isHome = false;
+  // unique name via a short time-based hash; strip a previous "(hash)" so repeated
+  // duplicates don't accumulate. Avoids "X copy" collisions on multiple duplicates.
+  // 用复制时刻短 hash 保证唯一；去掉旧的"(hash)"避免叠加，规避多次复制重名。
+  const base = p.name.replace(/\s*\([0-9a-z]{4}\)\s*$/i, "");
+  np.name = `${base} (${Date.now().toString(36).slice(-4)})`;
   const gmap = {};
   (np.elements || []).forEach(e => {
     e.id = nextId("e");
