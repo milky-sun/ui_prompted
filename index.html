@@ -269,6 +269,7 @@
     <button class="tool" data-act="newpage">＋ New</button>
     <button class="tool" data-act="import">Import</button>
     <button class="tool" data-act="export">Export</button>
+    <button class="tool" data-act="clear" title="Clear everything (all pages)">🗑 Clear</button>
   </div>
 
   <div class="group">
@@ -1636,6 +1637,8 @@ document.addEventListener("click", (e) => {
     exportJSON();
   } else if (act === "import") {
     $("#fileInput").click();
+  } else if (act === "clear") {
+    clearAll();
   } else if (act === "view") {
     setMode(btn.dataset.mode);
   } else if (act === "link") {
@@ -1702,6 +1705,16 @@ function setMode(m) {
 function exportJSON() {
   download(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), "easy-xml-project.json");
   toast("Exported JSON");
+}
+
+// reset the whole project to a blank state (confirm + undoable) / 清空全部（确认+可撤销）
+function clearAll() {
+  if (!confirm("Clear everything?\nThis removes ALL pages and elements.\n(You can still undo with ⌘/Ctrl+Z)")) return;
+  snapshot();
+  freshProject();
+  clearSel();
+  render();
+  toast("Cleared — ⌘/Ctrl+Z to undo");
 }
 $("#fileInput").addEventListener("change", (e) => {
   const file = e.target.files[0];
