@@ -1,13 +1,18 @@
 # easy-xml — 项目记忆 / Project Memory
 
-> 本文件是本项目的全部记忆载体（铁则：所有记忆只用 `~/ClaudeWork/easy-xml` 文件夹）。
-> This file is the project's memory store (rule: all memory lives only in this folder).
+> 本文件是本项目的全部记忆载体（铁则：所有记忆只用 `~/ClaudeWork/ui_prompted` 文件夹，且全部纳入 git 管理）。
+> This file is the project's memory store (rule: all memory lives only in this folder, and is all under git version control).
 
 ## 铁则 / Iron rules
-- 所有记忆只保存在本文件夹内。All memory stays inside this folder.
+- 所有记忆只保存在本文件夹内，并全部纳入 git 管理。All memory stays inside this folder and is fully tracked by git.
 - **零依赖优先。Dependency policy:** 1) 能自写就自写；2) 必须用 OSS 时**贴入并固定版本**（vendoring，注明出处/版本/许可证）；3) **不运行时引用 CDN/动态加载**（破坏离线、CDN 故障、版本漂移、需 SRI）。保持"单文件·离线·永久可用"。
 - Git 版本管理，使用项目独立账户（非全局）。Per-project git account (not global):
   - `milky-sun` / `c21uhs016@gmail.com`
+  - **必须用 `milky-sun` 账号推送，禁止使用 `gh` CLI**（gh 会用全局/默认登录账号，会推错账号）。
+    **Always push as `milky-sun`; the `gh` CLI is FORBIDDEN** (it uses the global/default login → wrong account).
+  - Remote（SSH 别名，确保用对私钥）：`origin = git@github_milky_sun:milky-sun/ui_prompted.git`
+    → 浏览器 / browser: https://github.com/milky-sun/ui_prompted
+    （`~/.ssh/config` 里 `Host github_milky_sun` → `IdentityFile ~/.ssh/github_milky_sun`；切勿改回素 `github.com`，否则会选错鍵。）
 - 项目语言：代码注释可中英；但 **UI 显示一律英文（不出现中文）**。
   Project language: comments may be CN+EN, but **the UI is English-only** (decided 2026-05-30, supersedes the old "CN+EN UI" rule).
 
@@ -15,6 +20,9 @@
 - **不要自动用浏览器打开 `index.html`**，用户会自己打开/刷新。Do NOT auto-run `open index.html`; the user opens it themselves.
 - **UI 文案只用英文**。新增按钮/标签/toast/prompt 等界面文字一律英文，不要再写中文。
   All NEW user-facing UI text (buttons, labels, toasts, prompts) must be English only.
+- **commit message 不要写 `Co-Authored-By`**（也不要任何 AI 署名）。No `Co-Authored-By` / AI sign-off lines in commit messages.
+- **记录（CLAUDE.md / commit）只写本项目，不提及任何其他项目/账号/路径。**
+  Records (CLAUDE.md / commits) describe THIS project only — never reference other projects, accounts, or paths.
 
 ## 目标 / Goal
 为 Android UI 建模做一个轻量草图工具：快速绘制 + 写描述 → 输出可直接喂给 AI 的 Markdown。
