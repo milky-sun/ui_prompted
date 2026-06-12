@@ -41,8 +41,8 @@
     return map;
   }
 
-  // exact path → suffix match (fewest extra segments wins) → basename
-  // 先精确路径，再后缀匹配（多余前缀最短者优先，避免吸到别目录同名文件），最后按文件名
+  // exact path → suffix match (shortest matching path wins) → basename
+  // 先精确路径，再后缀匹配（匹配路径最短者优先，避免吸到别目录同名文件），最后按文件名
   function resolveRef(ref, fileMap) {
     if (!ref || /^(https?:|data:|blob:|javascript:|#|mailto:)/i.test(ref)) return null;
     let p = normPath(String(ref).split(/[?#]/)[0]).toLowerCase();
