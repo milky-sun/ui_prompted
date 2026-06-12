@@ -23,6 +23,7 @@
     <button class="tool" data-act="newpage">＋ New</button>
     <button class="tool" data-act="import">Import</button>
     <button class="tool" data-act="export">Export</button>
+    <button class="tool" id="importHtmlBtn" title="Import an existing website (HTML/CSS) as sketch elements">⇪ Import HTML</button>
     <button class="tool" data-act="clear" title="Clear everything (all pages)">🗑 Clear</button>
   </div>
 
@@ -118,6 +119,8 @@
 
 <div class="toast" id="toast"></div>
 <input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+<input type="file" id="htmlFiles" multiple accept=".html,.htm,.css" style="display:none">
+<input type="file" id="htmlFolder" webkitdirectory style="display:none">
 
 <script>
 "use strict";
@@ -377,5 +380,93 @@ window.APP_CONFIG = {
 };
 </script>
 <script src="sketcher.js"></script>
+<script src="html_import.js"></script>
+<script>
+"use strict";
+// ====================================================================
+// Import HTML glue / 导入现有网页（webpage 页特有，引擎之外）
+// HtmlImport 拍平 → 这里建页、配真实 id、按页名接好 iframe 链接。
+// ====================================================================
+(function () {
+  const filesInput = $("#htmlFiles");
+  const folderInput = $("#htmlFolder");
+
+  $("#importHtmlBtn").onclick = (e) => {
+    const r = e.target.getBoundingClientRect();
+    openPopmenu(r.left, r.bottom + 4, [
+      { label: "📄 Select files (.html + .css)", action: () => filesInput.click() },
+      { label: "📁 Select a folder", action: () => folderInput.click() },
+    ]);
+  };
+
+  function handleFiles(files) {
+    if (!files || !files.length) return;
+    const all = [...files];
+    const htmls = all.filter(f => /\.html?$/i.test(f.name));
+    if (!htmls.length) { toast("No .html file in the selection"); return; }
+    const run = (mainFile) => {
+      toast("Importing…");
+      HtmlImport.importHtmlFiles(all, { canvasW: cw(), htmlFile: mainFile })
+        .then(applyHtmlImport)
+        .catch(err => { console.warn("HTML import failed", err); toast("Import failed: " + err.message); });
+    };
+    if (htmls.length > 1) {
+      // several HTML files → let the user pick the entry one / 多个 HTML 时让用户选入口
+      openPopmenu(window.innerWidth / 2 - 120, 80,
+        htmls.slice(0, 10).map(f => ({ label: "📄 " + (f.webkitRelativePath || f.name), action: () => run(f) })));
+    } else {
+      run(htmls[0]);
+    }
+  }
+
+  // unique page name, reusing the duplicate-page short-hash convention
+  // 页名唯一化，沿用复制页面的短 hash 约定
+  function uniquePageName(base) {
+    if (!project.pages.some(p => p.name === base)) return base;
+    return base.replace(/\s*\([0-9a-z]{4}\)\s*$/i, "") + " (" + Date.now().toString(36).slice(-4) + ")";
+  }
+
+  // exposed for testing & future reuse / 暴露便于测试与复用
+  window.applyHtmlImport = function (res) {
+    if (!res.pages.length || !res.pages[0].elements.length) { toast("Nothing visible to import"); return; }
+    snapshot();                                  // one snapshot → one ⌘Z removes everything
+    const nameMap = {};                          // import-page name → real page
+    res.pages.forEach(pg => {
+      const p = createPage(uniquePageName(pg.name));
+      p.canvasW = clamp(pg.suggestedW, 120, 4000);
+      p.canvasH = clamp(pg.suggestedH, 120, 4000);
+      nameMap[pg.name] = p;
+      const gmap = {};                           // groupKey → real groupId (same shape as cloneInto)
+      pg.elements.forEach(e => {
+        const el = {
+          id: nextId("e"), type: e.type, x: e.x, y: e.y, w: e.w, h: e.h,
+          text: e.text || "", note: e.note || "", textPos: e.textPos || null,
+          color: e.color || "#ffffff", opacity: e.opacity != null ? e.opacity : 1,
+          linkTo: null, ref: null,
+          groupId: e.groupKey ? (gmap[e.groupKey] || (gmap[e.groupKey] = nextId("g"))) : null,
+        };
+        if (e.linkToPage) el._linkToPage = e.linkToPage;
+        p.elements.push(el);
+      });
+    });
+    // wire iframe placeholder boxes to their sub-pages / 接好 iframe 框 → 子页
+    Object.values(nameMap).forEach(p => p.elements.forEach(el => {
+      if (el._linkToPage) {
+        const tp = nameMap[el._linkToPage];
+        el.linkTo = tp ? tp.id : null;
+        delete el._linkToPage;
+      }
+    }));
+    project.activePageId = nameMap[res.pages[0].name].id;
+    clearSel(); render();
+    const n = res.pages.reduce((s, p) => s + p.elements.length, 0);
+    toast("Imported " + n + " elements (" + res.pages.length + " page" + (res.pages.length > 1 ? "s" : "") + ") — ⌘/Ctrl+Z to undo");
+    if (res.warnings.length) console.warn("HTML import warnings:", res.warnings);
+  };
+
+  filesInput.addEventListener("change", (e) => { handleFiles(e.target.files); e.target.value = ""; });
+  folderInput.addEventListener("change", (e) => { handleFiles(e.target.files); e.target.value = ""; });
+})();
+</script>
 </body>
 </html>
