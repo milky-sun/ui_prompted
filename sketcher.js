@@ -1,0 +1,1678 @@
+"use strict";
+// ====================================================================
+// ui_prompted — state & logic / 状态与逻辑
+// ====================================================================
+const STORE_KEY = "ui_prompted-project-v1";
+const STORE_KEY_LEGACY = "easy-xml-project-v1";  // pre-rename key; read once for migration
+
+// Default element sizes / 默认尺寸 (color optional: foreground for text-like)
+const DEFAULTS = {
+  rect:      { w: 200, h: 130, text: "" },
+  text:      { w: 160, h: 28,  text: "Text", color: "#1d2330" },
+  textfield: { w: 240, h: 46,  text: "Input..." },
+  button:    { w: 140, h: 46,  text: "Button" },
+  list:      { w: 260, h: 220, text: "Item" },
+  image:     { w: 200, h: 140, text: "", color: "#eef0f3" },
+  icon:      { w: 44,  h: 44,  text: "★", color: "#1d2330" },
+  card:      { w: 240, h: 160, text: "" },
+  topbar:    { w: 360, h: 56,  text: "Title" },
+  bottombar: { w: 360, h: 60,  text: "Home,Search,Profile" },
+  fab:       { w: 56,  h: 56,  text: "＋", color: "#5b9dff" },
+  toggle:    { w: 52,  h: 30,  text: "", color: "#5b9dff" },
+  divider:   { w: 240, h: 2,   text: "", color: "#d0d0d0" },
+  include:   { w: 170, h: 130, text: "" },
+};
+
+// Canvas presets / 画面预设
+const CANVAS_PRESETS = [
+  { label: "Phone 360×720",    w: 360,  h: 720 },
+  { label: "Phone 360×800",    w: 360,  h: 800 },
+  { label: "Phone L 412×915",  w: 412,  h: 915 },
+  { label: "Compact 320×568",  w: 320,  h: 568 },
+  { label: "Tablet 800×1280",  w: 800,  h: 1280 },
+  { label: "Web 1280×800",     w: 1280, h: 800 },
+  { label: "Desktop 1440×900", w: 1440, h: 900 },
+];
+
+// target platforms (hint passed to AI) / 目标平台（提示给 AI）
+const TARGETS = ["Android", "iOS", "Web", "Desktop", "Mobile (generic)"];
+
+let project = null;        // { pages, activePageId, seq }
+let selection = { kind: "el", ids: [] };   // multi-select / 复数选择
+// ---- selection helpers / 选择辅助 ----
+function clearSel() { selection = { kind: "el", ids: [] }; }
+function setSel(kind, ids) { selection = { kind, ids: ids.slice() }; }
+function isSel(id) { return selection.ids.indexOf(id) >= 0; }
+function selObjs() {
+  const page = activePage();
+  const src = selection.kind === "memo" ? page.memos : page.elements;
+  return selection.ids.map(id => src.find(o => o.id === id)).filter(Boolean);
+}
+function primarySel() { return selObjs()[0] || null; }
+let memoVisible = true;
+let mode = "visual";       // 'visual' | 'code' | 'preview'
+let codeDirty = false;     // code edited but not applied / 代码已改未应用
+let zoom = 1;              // canvas zoom factor / 画布缩放倍数
+let zoomFit = true;        // auto-fit to window / 自动适应窗口
+let clipboard = [];        // copied elements / 剪贴板（元素副本）
+let snapGrid = true;       // snap to grid while moving / 移动时网格吸附
+const GRID = 8;            // grid step (canvas units) / 网格步长
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const $ = (sel) => document.querySelector(sel);
+const canvas = $("#canvas");
+const elLayer = $("#elLayer");
+const memoLayer = $("#memoLayer");
+const overlay = $("#overlay");
+
+// ---- ID / 唯一ID ----
+function nextId(prefix) {
+  project.seq = (project.seq || 0) + 1;
+  return prefix + project.seq;
+}
+
+// ---- Persistence / 持久化 (localStorage) ----
+const PREFS_KEY = "ui_prompted-prefs-v1";
+const PREFS_KEY_LEGACY = "easy-xml-prefs-v1";  // pre-rename key; read once for migration
+let saveTimer = null;
+function save() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300); }  // debounced
+function saveNow() {
+  clearTimeout(saveTimer); saveTimer = null;
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(project)); }
+  catch (e) { console.warn("save failed", e); }
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY) || localStorage.getItem(STORE_KEY_LEGACY);
+    if (raw) { project = JSON.parse(raw); return true; }
+  } catch (e) { console.warn("load failed", e); }
+  return false;
+}
+// ---- UI preferences (separate from the project) / 界面偏好（与项目分开） ----
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      snapGrid, zoom, zoomFit, memoVisible,
+      collapsed: document.body.classList.contains("tb-collapsed"),
+    }));
+  } catch (e) {}
+}
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || localStorage.getItem(PREFS_KEY_LEGACY) || "{}");
+    if (typeof p.snapGrid === "boolean") snapGrid = p.snapGrid;
+    if (typeof p.memoVisible === "boolean") memoVisible = p.memoVisible;
+    if (typeof p.zoomFit === "boolean") zoomFit = p.zoomFit;
+    if (typeof p.zoom === "number") zoom = p.zoom;
+    if (p.collapsed) document.body.classList.add("tb-collapsed");
+  } catch (e) {}
+}
+window.addEventListener("beforeunload", saveNow);   // flush pending save / 退出前落盘
+
+// ---- Undo / Redo history / 撤销·重做历史 ----
+const undoStack = [], redoStack = [];
+const HMAX = 100;
+// capture the current state BEFORE a mutating action / 在改动前快照
+function snapshot() {
+  undoStack.push(JSON.stringify(project));
+  if (undoStack.length > HMAX) undoStack.shift();
+  redoStack.length = 0;
+}
+function restoreState(json) {
+  project = JSON.parse(json);
+  migrate();
+  if (!project.pages.some(p => p.id === project.activePageId)) project.activePageId = project.pages[0].id;
+  clearSel();
+  render();
+}
+function undo() {
+  if (!undoStack.length) { toast("Nothing to undo"); return; }
+  redoStack.push(JSON.stringify(project));
+  restoreState(undoStack.pop());
+}
+function redo() {
+  if (!redoStack.length) { toast("Nothing to redo"); return; }
+  undoStack.push(JSON.stringify(project));
+  restoreState(redoStack.pop());
+}
+function activePage() {
+  return project.pages.find(p => p.id === project.activePageId) || project.pages[0];
+}
+// active canvas size / 当前画面尺寸
+function cw() { const p = activePage(); return (p && p.canvasW) || 360; }
+function ch() { const p = activePage(); return (p && p.canvasH) || 720; }
+
+// ---- Init / 初始化 ----
+function freshProject() {
+  project = { pages: [], activePageId: null, seq: 0 };
+  const p = createPage("Home");
+  p.isHome = true;
+  project.activePageId = p.id;
+}
+function createPage(name) {
+  const p = {
+    id: nextId("p"),
+    name: name || ("Page " + (project.pages.length + 1)),
+    isHome: false, elements: [], memos: [],
+    canvasW: 360, canvasH: 720,
+  };
+  project.pages.push(p);
+  return p;
+}
+// fill defaults for old data / 兼容旧数据
+function migrate() {
+  if (!project.pages) return;
+  if (!project.target) project.target = "Android";
+  project.pages.forEach(p => {
+    if (!p.canvasW) p.canvasW = 360;
+    if (!p.canvasH) p.canvasH = 720;
+    if (!p.memos) p.memos = [];
+    (p.elements || []).forEach(e => { if (e.note == null) e.note = ""; if (e.ref === undefined) e.ref = null; if (e.groupId === undefined) e.groupId = null; if (e.textPos === undefined) e.textPos = null; });
+  });
+}
+
+// ====================================================================
+// Rendering / 渲染
+// ====================================================================
+function render() {
+  renderPageList();
+  renderCanvas();
+  renderProps();
+  syncCanvasControls();
+  syncStyleControls();
+  save();
+}
+
+// reflect the selected element's color/opacity in the toolbar Style controls
+// 让工具栏样式控件反映当前选中元素的颜色/透明度
+function syncStyleControls() {
+  const sel = selection.kind === "el" ? primarySel() : null;
+  if (sel) {
+    $("#fillColor").value = sel.color || "#ffffff";
+    $("#opacity").value = sel.opacity != null ? sel.opacity : 1;
+  }
+}
+
+// apply a Style control to the current selection live (WYSIWYG) and keep as default
+// 把样式控件实时应用到选中元素（所见即所得），同时作为新元素默认值
+function applyStyleToSelection(key, val) {
+  if (selection.kind === "el" && selection.ids.length) {
+    flushEditSnap();   // push pre-edit state on first change of this focus session
+    selObjs().forEach(o => o[key] = val);
+    renderCanvas(); renderProps(); save();
+  }
+}
+$("#fillColor").addEventListener("input", (e) => applyStyleToSelection("color", e.target.value));
+$("#opacity").addEventListener("input", (e) => applyStyleToSelection("opacity", parseFloat(e.target.value)));
+// capture pre-edit state on focus; flushed only if an actual change happens / 聚焦记前态，改动才入栈
+["#fillColor", "#opacity"].forEach(s => $(s).addEventListener("focus", () => {
+  if (selection.kind === "el" && selection.ids.length) editSnap = JSON.stringify(project);
+}));
+
+function syncCanvasControls() {
+  const p = activePage();
+  $("#canvasW").value = p.canvasW;
+  $("#canvasH").value = p.canvasH;
+  const preset = CANVAS_PRESETS.findIndex(x => x.w === p.canvasW && x.h === p.canvasH);
+  $("#canvasPreset").value = preset >= 0 ? String(preset) : "custom";
+}
+
+let renamingPageId = null;   // page being renamed inline / 正在内联重命名的页面
+
+function renderPageList() {
+  const list = $("#pageList");
+  list.innerHTML = "";
+  project.pages.forEach(p => {
+    const div = document.createElement("div");
+    div.className = "page-item" + (p.id === project.activePageId ? " active" : "");
+    div.appendChild(makeSpan("home-dot", p.isHome ? "★" : ""));
+    if (renamingPageId === p.id) {
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.value = p.name; inp.className = "page-rename";
+      const commit = (keep) => {
+        renamingPageId = null;
+        const v = inp.value.trim();
+        if (keep && v && v !== p.name) { snapshot(); p.name = v; }
+        render();
+      };
+      inp.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter") commit(true); else if (ev.key === "Escape") commit(false); };
+      inp.onblur = () => commit(true);
+      div.appendChild(inp);
+      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    } else {
+      const name = makeSpan("name", p.name);
+      name.onclick = () => { project.activePageId = p.id; clearSel(); render(); };
+      div.appendChild(name);
+      div.querySelector(".home-dot").onclick = () => { project.activePageId = p.id; clearSel(); render(); };
+      const menu = makeSpan("pgmenu", "⋯"); menu.title = "Menu";
+      menu.onclick = (e) => { e.stopPropagation(); const r = menu.getBoundingClientRect(); openPageMenu(p, r.left, r.bottom + 4); };
+      div.appendChild(menu);
+    }
+    list.appendChild(div);
+  });
+}
+function makeSpan(cls, text) { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; }
+
+function openPageMenu(p, x, y) {
+  openPopmenu(x, y, [
+    { label: "✎ Rename", action: () => { renamingPageId = p.id; render(); } },
+    { label: "⧉ Duplicate", action: () => duplicatePage(p) },
+    { label: "★ Set as Home", disabled: p.isHome, action: () => {
+        snapshot(); project.pages.forEach(x => x.isHome = false); p.isHome = true; render();
+      } },
+    { sep: true },
+    { label: "🗑 Delete", danger: true, disabled: project.pages.length === 1, action: () => deletePage(p) },
+  ]);
+}
+function duplicatePage(p) {
+  snapshot();
+  const np = JSON.parse(JSON.stringify(p));
+  np.id = nextId("p"); np.isHome = false;
+  // unique name via a short time-based hash; strip a previous "(hash)" so repeated
+  // duplicates don't accumulate. Avoids "X copy" collisions on multiple duplicates.
+  // 用复制时刻短 hash 保证唯一；去掉旧的"(hash)"避免叠加，规避多次复制重名。
+  const base = p.name.replace(/\s*\([0-9a-z]{4}\)\s*$/i, "");
+  np.name = `${base} (${Date.now().toString(36).slice(-4)})`;
+  const gmap = {};
+  (np.elements || []).forEach(e => {
+    e.id = nextId("e");
+    if (e.groupId) { if (!gmap[e.groupId]) gmap[e.groupId] = nextId("g"); e.groupId = gmap[e.groupId]; }
+  });
+  (np.memos || []).forEach(m => m.id = nextId("m"));
+  project.pages.splice(project.pages.indexOf(p) + 1, 0, np);
+  project.activePageId = np.id; clearSel(); render();
+  toast("Page duplicated");
+}
+function deletePage(p) {
+  if (project.pages.length === 1) return;
+  snapshot();
+  project.pages = project.pages.filter(x => x.id !== p.id);
+  project.pages.forEach(pg => pg.elements.forEach(el => {   // clear links / includes pointing here
+    if (el.linkTo === p.id) el.linkTo = null;
+    if (el.ref === p.id) el.ref = null;
+  }));
+  if (project.activePageId === p.id) project.activePageId = project.pages[0].id;
+  if (!project.pages.some(x => x.isHome)) project.pages[0].isHome = true;
+  render();
+  toast("Page deleted — ⌘/Ctrl+Z to undo");
+}
+
+// ---- lightweight popup menu (non-blocking) / 轻量弹出菜单（不打断） ----
+let popmenuEl = null;
+function closePopmenu() {
+  if (!popmenuEl) return;
+  popmenuEl.remove(); popmenuEl = null;
+  document.removeEventListener("pointerdown", onPopOutside, true);
+}
+function onPopOutside(e) { if (popmenuEl && !popmenuEl.contains(e.target)) closePopmenu(); }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopmenu(); });
+function openPopmenu(x, y, items) {
+  closePopmenu();
+  const m = document.createElement("div");
+  m.className = "popmenu";
+  items.forEach(it => {
+    if (it.sep) { const s = document.createElement("div"); s.className = "sep"; m.appendChild(s); return; }
+    const b = document.createElement("button");
+    b.textContent = it.label;
+    if (it.danger) b.className = "danger";
+    if (it.disabled) b.disabled = true;
+    else b.onclick = () => { closePopmenu(); it.action(); };
+    m.appendChild(b);
+  });
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, window.innerWidth - r.width - 8) + "px";
+  m.style.top = Math.min(y, window.innerHeight - r.height - 8) + "px";
+  popmenuEl = m;
+  setTimeout(() => document.addEventListener("pointerdown", onPopOutside, true), 0);
+}
+
+function renderCanvas() {
+  const page = activePage();
+  const W = cw(), H = ch();
+  canvas.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  applyZoom();   // sets width/height from zoom / 按缩放设置宽高
+
+  elLayer.innerHTML = "";
+  memoLayer.innerHTML = "";
+  overlay.innerHTML = "";
+
+  page.elements.forEach(el => elLayer.appendChild(buildElement(el)));
+  memoLayer.style.display = memoVisible ? "" : "none";
+  page.memos.forEach(m => memoLayer.appendChild(buildMemo(m)));
+
+  // empty-canvas hint / 空画布提示
+  if (!page.elements.length && !page.memos.length && mode === "visual") {
+    label(overlay, W / 2, H / 2, "Drag an element here", "#c4c9d2", 16, "middle");
+  }
+
+  if (selection.ids.length && mode !== "preview") {
+    const objs = selObjs();
+    const single = objs.length === 1;
+    objs.forEach(o => drawSelection(o.x, o.y, o.w || 200, o.h || 80, single));
+  }
+}
+
+// build a top-level (interactive) element / 构建可交互的顶层元素
+function buildElement(el) {
+  const g = document.createElementNS(SVGNS, "g");
+  g.setAttribute("class", "el" + (mode === "preview" && el.linkTo ? " preview-link" : ""));
+  g.setAttribute("transform", `translate(${el.x},${el.y})`);
+  g.dataset.id = el.id;
+  g.dataset.kind = "el";
+  drawShapes(g, el, 0);
+
+  // note badge / 注释标记
+  if (el.note && el.note.trim()) {
+    const n = document.createElementNS(SVGNS, "text");
+    n.setAttribute("x", 5); n.setAttribute("y", 15);
+    n.setAttribute("font-size", "12"); n.setAttribute("fill", "#caa53a");
+    n.textContent = "📝";
+    const ttl = document.createElementNS(SVGNS, "title");
+    ttl.textContent = el.note; n.appendChild(ttl);
+    g.appendChild(n);
+  }
+  // link badge / 链接标记
+  if (el.linkTo) {
+    const t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("x", el.w - 6); t.setAttribute("y", 16);
+    t.setAttribute("text-anchor", "end"); t.setAttribute("font-size", "12");
+    t.setAttribute("fill", "#5b9dff"); t.textContent = "🔗";
+    g.appendChild(t);
+  }
+  return g;
+}
+
+// default text position per type / 各类型默认文本位置
+const TEXT_DEFAULT_POS = { rect: "tl", text: "ml", textfield: "ml", button: "mc", card: "tl" };
+// resolve {x, y, anchor} for an element's text given its 9-anchor position
+// 依据 9 宫格位置算出文本的 {x, y, anchor}
+function textXY(el, size) {
+  const pos = el.textPos || TEXT_DEFAULT_POS[el.type] || "mc";
+  const row = pos[0], col = pos[1], pad = 10;
+  let x, anchor;
+  if (col === "l") { x = pad; anchor = "start"; }
+  else if (col === "r") { x = el.w - pad; anchor = "end"; }
+  else { x = el.w / 2; anchor = "middle"; }
+  let y;
+  if (row === "t") y = size + 6;
+  else if (row === "b") y = el.h - 8;
+  else y = el.h / 2 + size * 0.35;
+  return { x, y, anchor };
+}
+
+// draw the shapes for an element into a group (local coords, no events)
+// 把元素的形状画进一个分组（局部坐标，无事件）。depth 用于限制 include 递归。
+function drawShapes(g, el, depth) {
+  const stroke = "#3a3d47";
+  const op = el.opacity != null ? el.opacity : 1;
+
+  if (el.type === "rect") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
+    if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor); }
+  } else if (el.type === "textfield") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 6);
+    const s = 14, p = textXY(el, s);
+    label(g, p.x, p.y, el.text || "Input...", el.text ? "#444" : "#8a8f99", s, p.anchor);
+  } else if (el.type === "button") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 22);
+    const s = 15, p = textXY(el, s);
+    label(g, p.x, p.y, el.text || "Button", "#1d2330", s, p.anchor, 600);
+  } else if (el.type === "list") {
+    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
+    const rows = Math.max(2, Math.floor(el.h / 44));
+    for (let i = 1; i < rows; i++) { const ly = i * (el.h / rows); line(g, 0, ly, el.w, ly, "#e3e3e3"); }
+    for (let i = 0; i < rows; i++) {
+      const ly = i * (el.h / rows) + (el.h / rows) / 2 + 4;
+      label(g, 14, ly, (el.text || "Item") + " " + (i + 1), "#4a4f59", 13, "start");
+    }
+  } else if (el.type === "text") {
+    // plain text label, no box / 纯文本，无边框
+    const s = Math.min(Math.max(el.h * 0.7, 12), 28), p = textXY(el, s);
+    label(g, p.x, p.y, el.text || "Text", el.color || "#1d2330", s, p.anchor);
+  } else if (el.type === "image") {
+    rect(g, 0, 0, el.w, el.h, el.color || "#eef0f3", op, "#c4c9d2", 8);
+    line(g, 0, 0, el.w, el.h, "#c4c9d2"); line(g, el.w, 0, 0, el.h, "#c4c9d2");
+    label(g, el.w / 2, el.h / 2 + 6, el.text || "🖼", "#8a8f99", 16, "middle");
+  } else if (el.type === "icon") {
+    const s = Math.min(el.w, el.h) * 0.82;
+    label(g, el.w / 2, el.h / 2 + s * 0.35, el.text || "★", el.color || "#1d2330", s, "middle");
+  } else if (el.type === "card") {
+    rect(g, 2, 3, el.w, el.h, "#00000018", op, "none", 12);   // soft shadow / 阴影
+    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 12);
+    if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor, 600); }
+  } else if (el.type === "topbar") {
+    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#5b9dff" : el.color, op, "none", 0);
+    label(g, 16, el.h / 2 + 6, "≡", "#fff", 20, "start");
+    label(g, 46, el.h / 2 + 5, el.text || "Title", "#fff", 16, "start", 600);
+    label(g, el.w - 16, el.h / 2 + 6, "⋮", "#fff", 20, "end");
+  } else if (el.type === "bottombar") {
+    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 0);
+    const items = (el.text || "Tab").split(",").map(s => s.trim()).filter(Boolean);
+    const n = Math.max(1, items.length);
+    items.forEach((it, i) => {
+      const cx = (i + 0.5) * (el.w / n);
+      circle(g, cx, el.h * 0.32, 8, i === 0 ? "#5b9dff" : "#b9bfca", "none");
+      label(g, cx, el.h * 0.78, it, i === 0 ? "#5b9dff" : "#8a8f99", 11, "middle");
+    });
+  } else if (el.type === "fab") {
+    const rr = Math.min(el.w, el.h) / 2;
+    circle(g, el.w / 2, el.h / 2, rr, el.color || "#5b9dff", "none");
+    label(g, el.w / 2, el.h / 2 + 8, el.text || "＋", "#fff", rr, "middle", 600);
+  } else if (el.type === "toggle") {
+    const rr = el.h / 2;
+    rect(g, 0, 0, el.w, el.h, el.color || "#5b9dff", op, "none", rr);   // "on" track
+    circle(g, el.w - rr, rr, rr - 3, "#fff", "none");                   // knob right
+  } else if (el.type === "divider") {
+    rect(g, 0, 0, el.w, Math.max(1, el.h), el.color || "#d0d0d0", op, "none", 0);
+  } else if (el.type === "include") {
+    rect(g, 0, 0, el.w, el.h, "#eef2ff", op, "#5b9dff", 8);
+    const ref = el.ref ? project.pages.find(p => p.id === el.ref) : null;
+    label(g, 6, 14, "📦 " + (ref ? ref.name : "(no page)"), "#3a6dd0", 11, "start", 600);
+    if (ref && depth < 1) {
+      // scaled snapshot of the referenced page / 引用页面的缩放快照
+      const pad = 4, top = 18;
+      const sc = Math.min((el.w - pad * 2) / (ref.canvasW || 360), (el.h - top - pad) / (ref.canvasH || 720));
+      const inner = document.createElementNS(SVGNS, "g");
+      inner.setAttribute("transform", `translate(${pad},${top}) scale(${sc})`);
+      inner.setAttribute("pointer-events", "none");
+      const bg = document.createElementNS(SVGNS, "rect");
+      bg.setAttribute("width", ref.canvasW || 360); bg.setAttribute("height", ref.canvasH || 720);
+      bg.setAttribute("fill", "#fafafa"); inner.appendChild(bg);
+      (ref.elements || []).forEach(ce => {
+        const cg = document.createElementNS(SVGNS, "g");
+        cg.setAttribute("transform", `translate(${ce.x},${ce.y})`);
+        drawShapes(cg, ce, depth + 1); // depth+1 → nested includes won't expand
+        inner.appendChild(cg);
+      });
+      g.appendChild(inner);
+    } else if (ref) {
+      label(g, el.w / 2, el.h / 2 + 10, "(nested)", "#9aa0ad", 10, "middle");
+    }
+  }
+}
+
+function buildMemo(m) {
+  const g = document.createElementNS(SVGNS, "g");
+  g.setAttribute("class", "memo-card");
+  g.setAttribute("transform", `translate(${m.x},${m.y})`);
+  g.dataset.id = m.id; g.dataset.kind = "memo";
+  const w = m.w || 180, h = m.h || 70;
+  rect(g, 0, 0, w, h, "#fff4c2", 0.96, "#d9b94a", 6);
+  const corner = document.createElementNS(SVGNS, "path");
+  corner.setAttribute("d", `M${w-14},0 L${w},14 L${w-14},14 Z`);
+  corner.setAttribute("fill", "#e0c45a");
+  g.appendChild(corner);
+  wrapText(g, 8, 18, m.text || "vibe...", w - 14, 13, "#5b4d12");
+  return g;
+}
+
+// ---- SVG helpers / SVG 辅助 ----
+function rect(parent, x, y, w, h, fill, op, stroke, r) {
+  const e = document.createElementNS(SVGNS, "rect");
+  e.setAttribute("x", x); e.setAttribute("y", y);
+  e.setAttribute("width", w); e.setAttribute("height", h);
+  e.setAttribute("rx", r || 0);
+  e.setAttribute("fill", fill || "#ffffff");
+  e.setAttribute("fill-opacity", op != null ? op : 1);
+  e.setAttribute("stroke", stroke || "#3a3d47");
+  e.setAttribute("stroke-width", "1.5");
+  parent.appendChild(e);
+}
+function label(parent, x, y, txt, fill, size, anchor, weight) {
+  const e = document.createElementNS(SVGNS, "text");
+  e.setAttribute("x", x); e.setAttribute("y", y);
+  e.setAttribute("fill", fill); e.setAttribute("font-size", size || 13);
+  e.setAttribute("text-anchor", anchor || "start");
+  if (weight) e.setAttribute("font-weight", weight);
+  e.setAttribute("font-family", "sans-serif");
+  e.textContent = txt;
+  parent.appendChild(e);
+}
+function line(parent, x1, y1, x2, y2, color) {
+  const e = document.createElementNS(SVGNS, "line");
+  e.setAttribute("x1", x1); e.setAttribute("y1", y1);
+  e.setAttribute("x2", x2); e.setAttribute("y2", y2);
+  e.setAttribute("stroke", color); e.setAttribute("stroke-width", "1");
+  parent.appendChild(e);
+}
+function circle(parent, cx, cy, r, fill, stroke) {
+  const e = document.createElementNS(SVGNS, "circle");
+  e.setAttribute("cx", cx); e.setAttribute("cy", cy); e.setAttribute("r", r);
+  e.setAttribute("fill", fill || "#fff");
+  if (stroke && stroke !== "none") { e.setAttribute("stroke", stroke); e.setAttribute("stroke-width", "1.5"); }
+  parent.appendChild(e);
+}
+function wrapText(parent, x, y, txt, maxW, size, fill) {
+  const words = String(txt).split(/\s+/);
+  const charW = size * 0.6;
+  const perLine = Math.max(1, Math.floor(maxW / charW));
+  let line = "", ly = y, lines = 0;
+  const flush = () => {
+    const t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("x", x); t.setAttribute("y", ly);
+    t.setAttribute("font-size", size); t.setAttribute("fill", fill);
+    t.setAttribute("font-family", "sans-serif");
+    t.textContent = line;
+    parent.appendChild(t); ly += size + 3; lines++;
+  };
+  for (const w of words) {
+    if ((line + " " + w).trim().length > perLine && line) { flush(); line = w; }
+    else { line = (line + " " + w).trim(); }
+    if (lines >= 4) break;
+  }
+  if (line && lines < 5) flush();
+}
+
+function drawSelection(x, y, w, h, withHandle) {
+  const o = document.createElementNS(SVGNS, "rect");
+  o.setAttribute("class", "sel-outline");
+  o.setAttribute("x", x - 2); o.setAttribute("y", y - 2);
+  o.setAttribute("width", w + 4); o.setAttribute("height", h + 4);
+  overlay.appendChild(o);
+  if (withHandle) {  // resize handle only for a single selection / 单选时才显示缩放手柄
+    const hd = document.createElementNS(SVGNS, "rect");
+    hd.setAttribute("class", "resize-handle");
+    hd.setAttribute("x", x + w - 5); hd.setAttribute("y", y + h - 5);
+    hd.setAttribute("width", 12); hd.setAttribute("height", 12);
+    hd.setAttribute("rx", 2);
+    hd.dataset.handle = "resize";
+    overlay.appendChild(hd);
+  }
+}
+
+// rubber-band selection rectangle / 框选矩形
+function drawBand(x, y, w, h) {
+  const b = document.createElementNS(SVGNS, "rect");
+  b.setAttribute("x", x); b.setAttribute("y", y);
+  b.setAttribute("width", w); b.setAttribute("height", h);
+  b.setAttribute("fill", "rgba(91,157,255,0.12)");
+  b.setAttribute("stroke", "#5b9dff"); b.setAttribute("stroke-width", "1");
+  b.setAttribute("stroke-dasharray", "3 2"); b.setAttribute("pointer-events", "none");
+  overlay.appendChild(b);
+}
+
+// ====================================================================
+// Properties panel / 属性面板
+// ====================================================================
+function renderProps() {
+  const body = $("#propBody");
+  const objs = selObjs();
+
+  if (!objs.length) { renderCanvasProps(body); return; }
+
+  // ---- multi-selection / 复数选择 ----
+  if (selection.kind === "el" && objs.length > 1) {
+    renderMultiProps(body, objs);
+    return;
+  }
+
+  const obj = objs[0];
+
+  if (selection.kind === "memo") {
+    body.innerHTML =
+      `<div class="field"><label>Vibe Memo (note for AI)</label>` +
+      `<textarea id="pMemoText">${escapeHtml(obj.text || "")}</textarea></div>` +
+      `<button class="btn-danger" id="pDelete">Delete</button>`;
+    $("#pMemoText").oninput = (e) => { obj.text = e.target.value; renderCanvas(); save(); };
+    $("#pDelete").onclick = deleteSelected;
+    return;
+  }
+
+  // ---- element / 元素 ----
+  const otherPages = project.pages.filter(p => p.id !== activePage().id);
+  const pageOpts = (selId) => otherPages
+    .map(p => `<option value="${p.id}" ${selId === p.id ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("");
+
+  let html = `<div class="field"><label>Type</label><div>${obj.type}</div></div>`;
+
+  if (obj.type === "include") {
+    html += `<div class="field"><label>📦 Embed page</label>` +
+      `<select id="pRef"><option value="">— Select —</option>${pageOpts(obj.ref)}</select></div>` +
+      `<button class="tool" id="pFlatten" style="width:100%;margin-bottom:12px">🧩 Flatten to elements</button>`;
+  } else {
+    html += `<div class="field"><label>Text (double-click element to edit)</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>`;
+    if (["rect", "textfield", "button"].includes(obj.type)) {
+      const cur = obj.textPos || TEXT_DEFAULT_POS[obj.type];
+      const TPOS = ["tl","tc","tr","ml","mc","mr","bl","bc","br"];
+      const GLYPH = { tl:"↖", tc:"↑", tr:"↗", ml:"←", mc:"•", mr:"→", bl:"↙", bc:"↓", br:"↘" };
+      html += `<div class="field"><label>Text position</label><div class="pos-grid">` +
+        TPOS.map(p => `<button data-pos="${p}" class="tool ${p === cur ? "active" : ""}">${GLYPH[p]}</button>`).join("") +
+        `</div></div>`;
+    }
+    html += `<div class="field row"><div><label>Color</label><input type="color" id="pColor" value="${obj.color || "#ffffff"}"></div>` +
+      `<div style="flex:1"><label>Opacity</label><input type="range" id="pOp" min="0" max="1" step="0.05" value="${obj.opacity != null ? obj.opacity : 1}"></div></div>`;
+  }
+
+  html += `<div class="field"><label>📝 Note (description for AI)</label>` +
+    `<textarea id="pNote" placeholder="e.g. main login button, validates email on tap…">${escapeHtml(obj.note || "")}</textarea></div>` +
+    `<div class="field row">` +
+    `<div><label>W</label><input type="text" id="pW" value="${Math.round(obj.w)}"></div>` +
+    `<div><label>H</label><input type="text" id="pH" value="${Math.round(obj.h)}"></div>` +
+    `<div><label>X</label><input type="text" id="pX" value="${Math.round(obj.x)}"></div>` +
+    `<div><label>Y</label><input type="text" id="pY" value="${Math.round(obj.y)}"></div></div>`;
+
+  if (obj.type !== "include") {
+    html += `<div class="field"><label>🔗 Link to page</label>` +
+      `<select id="pLink"><option value="">— None —</option>${pageOpts(obj.linkTo)}</select></div>`;
+  }
+  html += zOrderHTML();
+  if (obj.groupId) html += `<button class="tool" id="pUngroup1" style="width:100%;margin-bottom:8px">⊟ Ungroup</button>`;
+  html += `<button class="btn-danger" id="pDelete">Delete</button>`;
+  body.innerHTML = html;
+  bindZOrder(body);
+
+  if (obj.groupId && $("#pUngroup1")) $("#pUngroup1").onclick = () => {
+    snapshot();
+    const gid = obj.groupId;
+    activePage().elements.forEach(e => { if (e.groupId === gid) e.groupId = null; });
+    render(); toast("Ungrouped");
+  };
+
+  if (obj.type === "include") {
+    $("#pRef").onchange = (e) => {
+      const v = e.target.value;
+      if (v && wouldRecurse(obj, v)) { toast("Would create a cycle"); e.target.value = obj.ref || ""; return; }
+      obj.ref = v || null; renderCanvas(); save();
+    };
+    $("#pFlatten").onclick = () => flattenInclude(obj);
+  } else {
+    $("#pText").oninput = (e) => { obj.text = e.target.value; renderCanvas(); save(); };
+    $("#pColor").oninput = (e) => { obj.color = e.target.value; renderCanvas(); save(); };
+    $("#pOp").oninput = (e) => { obj.opacity = parseFloat(e.target.value); renderCanvas(); save(); };
+    $("#pLink").onchange = (e) => { obj.linkTo = e.target.value || null; renderCanvas(); save(); };
+    body.querySelectorAll(".pos-grid [data-pos]").forEach(b => b.onclick = () => {
+      snapshot(); obj.textPos = b.dataset.pos; save(); renderCanvas(); renderProps();
+    });
+  }
+  $("#pNote").oninput = (e) => { obj.note = e.target.value; renderCanvas(); save(); };
+  ["W","H","X","Y"].forEach(k => {
+    $("#p" + k).onchange = (e) => {
+      const v = parseFloat(e.target.value);
+      if (!isNaN(v)) { obj[k.toLowerCase()] = v; renderCanvas(); save(); }
+    };
+  });
+  $("#pDelete").onclick = deleteSelected;
+}
+
+// multi-selection panel / 复数选择面板
+function renderMultiProps(body, objs) {
+  const groupIds = new Set(objs.map(o => o.groupId).filter(Boolean));
+  const allSameGroup = groupIds.size === 1 && objs.every(o => o.groupId) &&
+    activePage().elements.filter(e => e.groupId === [...groupIds][0]).length === objs.length;
+  const anyGrouped = groupIds.size > 0;
+  body.innerHTML =
+    `<div class="field"><label>Selected</label><div>${objs.length} elements</div></div>` +
+    `<button class="tool primary" id="pGroup" style="width:100%;margin-bottom:8px">⊞ Group</button>` +
+    (anyGrouped ? `<button class="tool" id="pUngroup" style="width:100%;margin-bottom:8px">⊟ Ungroup</button>` : "") +
+    `<div class="field row" style="margin-top:8px"><label style="margin:0">Align</label></div>` +
+    `<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:12px">` +
+    `<button class="tool" data-align="left" title="Left">⇤</button>` +
+    `<button class="tool" data-align="hcenter" title="Center H">⇔</button>` +
+    `<button class="tool" data-align="right" title="Right">⇥</button>` +
+    `<button class="tool" data-align="top" title="Top">⤒</button>` +
+    `<button class="tool" data-align="vcenter" title="Center V">⇕</button>` +
+    `<button class="tool" data-align="bottom" title="Bottom">⤓</button></div>` +
+    `<div class="field row" style="margin-top:4px"><label style="margin:0">Distribute (3+)</label></div>` +
+    `<div class="row" style="gap:4px;margin-bottom:12px">` +
+    `<button class="tool" data-dist="h">↔ Horizontal</button>` +
+    `<button class="tool" data-dist="v">↕ Vertical</button></div>` +
+    zOrderHTML() +
+    `<button class="btn-danger" id="pDelete">Delete all</button>`;
+  if (allSameGroup) { const u = $("#pUngroup"); if (u) u.textContent = "⊟ Ungroup"; }
+  $("#pGroup").onclick = groupSelection;
+  if ($("#pUngroup")) $("#pUngroup").onclick = ungroupSelection;
+  body.querySelectorAll("[data-align]").forEach(b => b.onclick = () => alignSelection(b.dataset.align));
+  body.querySelectorAll("[data-dist]").forEach(b => b.onclick = () => distribute(b.dataset.dist));
+  bindZOrder(body);
+  $("#pDelete").onclick = deleteSelected;
+}
+
+// group / ungroup via shared groupId / 通过共享 groupId 编组与解组
+function groupSelection() {
+  const objs = selObjs();
+  if (objs.length < 2) return;
+  snapshot();
+  const gid = nextId("g");
+  objs.forEach(o => o.groupId = gid);
+  render();
+  toast("Grouped");
+}
+function ungroupSelection() {
+  if (!selObjs().some(o => o.groupId)) return;
+  snapshot();
+  selObjs().forEach(o => o.groupId = null);
+  render();
+  toast("Ungrouped");
+}
+function alignSelection(how) {
+  const objs = selObjs();
+  if (objs.length < 2) return;
+  snapshot();
+  const xs = objs.map(o => o.x), ys = objs.map(o => o.y);
+  const x2 = objs.map(o => o.x + o.w), y2 = objs.map(o => o.y + o.h);
+  const minX = Math.min(...xs), maxX = Math.max(...x2);
+  const minY = Math.min(...ys), maxY = Math.max(...y2);
+  objs.forEach(o => {
+    if (how === "left") o.x = minX;
+    else if (how === "right") o.x = maxX - o.w;
+    else if (how === "hcenter") o.x = (minX + maxX) / 2 - o.w / 2;
+    else if (how === "top") o.y = minY;
+    else if (how === "bottom") o.y = maxY - o.h;
+    else if (how === "vcenter") o.y = (minY + maxY) / 2 - o.h / 2;
+  });
+  render();
+}
+// distribute 3+ elements with equal gaps along an axis / 沿轴等间隔分布
+function distribute(axis) {
+  const objs = selObjs();
+  if (objs.length < 3) { toast("Select 3+ elements"); return; }
+  snapshot();
+  const sz = (o) => axis === "h" ? o.w : o.h;
+  const pos = (o) => axis === "h" ? o.x : o.y;
+  const set = (o, v) => { if (axis === "h") o.x = v; else o.y = v; };
+  const sorted = objs.slice().sort((a, b) => (pos(a) + sz(a) / 2) - (pos(b) + sz(b) / 2));
+  const first = sorted[0], last = sorted[sorted.length - 1];
+  const span = (pos(last) + sz(last) / 2) - (pos(first) + sz(first) / 2);
+  const step = span / (sorted.length - 1);
+  sorted.forEach((o, i) => { if (i > 0 && i < sorted.length - 1) set(o, (pos(first) + sz(first) / 2) + step * i - sz(o) / 2); });
+  render();
+}
+
+// ---- z-order (array order = paint order; last = front) / 层级（数组序=绘制序，末尾在前） ----
+function reorder(mode) {
+  if (selection.kind !== "el" || !selection.ids.length) return;
+  snapshot();
+  const page = activePage();
+  const els = page.elements;
+  const sel = new Set(selection.ids);
+  if (mode === "front") {
+    page.elements = els.filter(e => !sel.has(e.id)).concat(els.filter(e => sel.has(e.id)));
+  } else if (mode === "back") {
+    page.elements = els.filter(e => sel.has(e.id)).concat(els.filter(e => !sel.has(e.id)));
+  } else if (mode === "forward") {            // one step toward front (array end)
+    for (let i = els.length - 2; i >= 0; i--)
+      if (sel.has(els[i].id) && !sel.has(els[i + 1].id)) { const t = els[i]; els[i] = els[i + 1]; els[i + 1] = t; }
+  } else if (mode === "backward") {           // one step toward back (array start)
+    for (let i = 1; i < els.length; i++)
+      if (sel.has(els[i].id) && !sel.has(els[i - 1].id)) { const t = els[i]; els[i] = els[i - 1]; els[i - 1] = t; }
+  }
+  render();
+}
+
+// z-order buttons (shared by single & multi props) / 层级按钮（单选/多选共用）
+function zOrderHTML() {
+  return `<div class="field"><label>Order</label><div class="row" style="flex-wrap:wrap;gap:4px">` +
+    `<button class="tool" data-z="front" title="Bring to front">⤒</button>` +
+    `<button class="tool" data-z="forward" title="Forward">↑</button>` +
+    `<button class="tool" data-z="backward" title="Backward">↓</button>` +
+    `<button class="tool" data-z="back" title="Send to back">⤓</button></div></div>`;
+}
+function bindZOrder(scope) { scope.querySelectorAll("[data-z]").forEach(b => b.onclick = () => reorder(b.dataset.z)); }
+
+// clone elements into the active page with an offset (paste / duplicate) / 复制粘贴
+function cloneInto(srcEls, offset) {
+  if (!srcEls || !srcEls.length) return;
+  snapshot();
+  const gmap = {};
+  const newIds = [];
+  srcEls.forEach(s => {
+    const c = JSON.parse(JSON.stringify(s));
+    c.id = nextId("e");
+    c.x = clamp((s.x || 0) + offset, 0, cw() - (s.w || 40));
+    c.y = clamp((s.y || 0) + offset, 0, ch() - (s.h || 40));
+    if (s.groupId) { if (!gmap[s.groupId]) gmap[s.groupId] = nextId("g"); c.groupId = gmap[s.groupId]; }
+    else c.groupId = null;
+    activePage().elements.push(c);
+    newIds.push(c.id);
+  });
+  setSel("el", newIds);
+  render();
+}
+function copySel() {
+  if (selection.kind === "el" && selection.ids.length) {
+    clipboard = selObjs().map(o => JSON.parse(JSON.stringify(o)));
+    toast(`Copied ${clipboard.length}`);
+  }
+}
+function pasteSel() { if (clipboard.length) cloneInto(clipboard, 14); }
+function duplicateSel() { if (selection.kind === "el" && selection.ids.length) cloneInto(selObjs(), 14); }
+
+// canvas-level properties shown when nothing selected / 未选中时显示画面属性
+function renderCanvasProps(body) {
+  const p = activePage();
+  const targetOpts = TARGETS.map(t => `<option ${project.target === t ? "selected" : ""}>${t}</option>`).join("");
+  body.innerHTML =
+    `<div class="field"><label>🎯 Target platform (hint for AI)</label>` +
+    `<select id="cpTarget">${targetOpts}</select></div>` +
+    `<div class="field"><label>Current page</label><div>${escapeHtml(p.name)}${p.isHome ? " ★" : ""}</div></div>` +
+    `<div class="field"><label>Canvas size (dp/px)</label>` +
+    `<div class="row"><input type="text" id="cpW" value="${p.canvasW}"> × <input type="text" id="cpH" value="${p.canvasH}"></div></div>` +
+    `<p class="empty-hint">Drag elements from the toolbar onto the canvas.<br><br>` +
+    `Select an element to edit it.</p>`;
+  $("#cpTarget").onchange = (e) => { project.target = e.target.value; save(); };
+  $("#cpW").onchange = (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(v, p.canvasH); };
+  $("#cpH").onchange = (e) => { const v = parseInt(e.target.value); if (v) applyCanvasSize(p.canvasW, v); };
+}
+
+// detect include cycle / 检测 include 循环
+function wouldRecurse(includeEl, targetPageId, seen) {
+  seen = seen || new Set();
+  if (targetPageId === activePage().id) return true; // self
+  if (seen.has(targetPageId)) return true;
+  seen.add(targetPageId);
+  const tp = project.pages.find(p => p.id === targetPageId);
+  if (!tp) return false;
+  return (tp.elements || []).some(e => e.type === "include" && e.ref && wouldRecurse(includeEl, e.ref, seen));
+}
+
+function deleteSelected() {
+  snapshot();
+  const page = activePage();
+  const ids = new Set(selection.ids);
+  if (selection.kind === "memo") page.memos = page.memos.filter(m => !ids.has(m.id));
+  else page.elements = page.elements.filter(e => !ids.has(e.id));
+  clearSel();
+  render();
+}
+
+// Flatten an include into copied primitive elements with computed coordinates.
+// 把 include 焊接成带"算好坐标"的普通元素副本（类似 group 粘贴）。一次性、不再联动，绝对安全。
+function flattenInclude(el) {
+  const ref = el.ref && project.pages.find(p => p.id === el.ref);
+  if (!ref) { toast("Pick a page to embed first"); return; }
+  snapshot();
+  const added = [];
+  const visited = new Set();           // 防循环 / cycle guard
+  function bake(srcPage, ox, oy, sc, depth) {
+    if (!srcPage || depth > 8) return;
+    (srcPage.elements || []).forEach(e => {
+      if (e.type === "include") {       // resolve nested include recursively / 递归展开嵌套
+        const rp = e.ref && project.pages.find(p => p.id === e.ref);
+        if (rp && !visited.has(rp.id)) {
+          visited.add(rp.id);
+          const isc = sc * Math.min(e.w / (rp.canvasW || 360), e.h / (rp.canvasH || 720));
+          bake(rp, ox + e.x * sc, oy + e.y * sc, isc, depth + 1);
+          visited.delete(rp.id);
+        }
+        return;
+      }
+      added.push({
+        id: nextId("e"), type: e.type,
+        x: ox + e.x * sc, y: oy + e.y * sc, w: e.w * sc, h: e.h * sc,
+        text: e.text || "", note: e.note || "",
+        color: e.color || "#ffffff", opacity: e.opacity != null ? e.opacity : 1,
+        linkTo: e.linkTo || null, ref: null,
+      });
+    });
+  }
+  const sc = Math.min(el.w / (ref.canvasW || 360), el.h / (ref.canvasH || 720));
+  visited.add(ref.id);
+  bake(ref, el.x, el.y, sc, 0);
+  const page = activePage();
+  page.elements = page.elements.filter(x => x.id !== el.id).concat(added);
+  clearSel();
+  render();
+  toast(`Flattened into ${added.length} elements`);
+}
+
+function applyCanvasSize(w, h) {
+  // NOTE: caller is responsible for snapshot() — toolbar handlers snapshot directly,
+  // the #props cpW/cpH path is covered by the focusin/flushEditSnap session.
+  const p = activePage();
+  p.canvasW = clamp(w, 120, 4000);
+  p.canvasH = clamp(h, 120, 4000);
+  render();
+}
+
+// ====================================================================
+// Interaction: drag from toolbar / 从工具栏拖拽
+// ====================================================================
+document.querySelectorAll(".tool.draw").forEach(t => {
+  t.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/plain", t.dataset.type));
+});
+canvas.addEventListener("dragover", (e) => { if (mode === "visual") e.preventDefault(); });
+canvas.addEventListener("drop", (e) => {
+  if (mode !== "visual") return;
+  e.preventDefault();
+  const type = e.dataTransfer.getData("text/plain");
+  if (!type) return;
+  const pt = clientToSvg(e.clientX, e.clientY);
+  if (type === "memo") addMemo(pt.x, pt.y);
+  else addElement(type, pt.x, pt.y);
+});
+
+function addElement(type, x, y) {
+  const d = DEFAULTS[type];
+  if (!d) return;
+  snapshot();
+  let w = d.w, h = d.h, ex = clamp(x - w / 2, 0, cw() - w), ey = clamp(y - h / 2, 0, ch() - h);
+  // structural elements snap into place / 结构性元素自动吸附
+  if (type === "topbar")      { w = cw(); ex = 0; ey = 0; }
+  else if (type === "bottombar") { w = cw(); ex = 0; ey = ch() - h; }
+  else if (type === "divider")   { w = Math.min(cw(), 240); ex = clamp(x - w / 2, 0, cw() - w); }
+  else if (type === "fab")    { ex = clamp(cw() - w - 16, 0, cw() - w); ey = clamp(ch() - h - 16, 0, ch() - h); }
+  const el = {
+    id: nextId("e"), type, x: ex, y: ey, w, h,
+    text: d.text, note: "", textPos: null,
+    color: d.color || $("#fillColor").value,
+    opacity: parseFloat($("#opacity").value),
+    linkTo: null, ref: null, groupId: null,
+  };
+  activePage().elements.push(el);
+  setSel("el", [el.id]);
+  render();
+  if (type === "include") toast("Pick a page to embed →");
+}
+
+function addMemo(x, y) {
+  snapshot();
+  const m = { id: nextId("m"), x: clamp(x - 90, 0, cw() - 180), y: clamp(y - 35, 0, ch() - 70), w: 180, h: 70, text: "" };
+  activePage().memos.push(m);
+  setSel("memo", [m.id]);
+  memoVisible = true;
+  render();
+}
+
+// ====================================================================
+// Interaction: move / resize on canvas / 画布上拖动与缩放
+// ====================================================================
+let drag = null;   // move / resize
+let band = null;   // rubber-band selection / 框选
+
+// coalesce drag re-renders to one per animation frame / 把拖拽重绘合并到每帧一次
+let rafPending = false, pendingOverlay = null;
+function scheduleCanvas(overlayFn) {
+  pendingOverlay = overlayFn || null;
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; renderCanvas(); if (pendingOverlay) pendingOverlay(); });
+}
+
+// expand an element id to its whole group (or just itself) / 展开到整组
+function groupMates(id) {
+  const el = activePage().elements.find(x => x.id === id);
+  if (el && el.groupId) return activePage().elements.filter(x => x.groupId === el.groupId).map(x => x.id);
+  return [id];
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (mode !== "visual") {
+    if (mode === "preview") {
+      const g = e.target.closest(".el");
+      if (g) {
+        const el = activePage().elements.find(x => x.id === g.dataset.id);
+        if (el && el.linkTo && project.pages.some(p => p.id === el.linkTo)) {
+          project.activePageId = el.linkTo; clearSel(); render();
+        }
+      }
+    }
+    return;
+  }
+  // resize handle (single selection only) / 缩放手柄（仅单选）
+  if (e.target.dataset && e.target.dataset.handle === "resize") {
+    const obj = primarySel();
+    if (!obj) return;
+    drag = { mode: "resize", obj, startX: e.clientX, startY: e.clientY, ow: obj.w, oh: obj.h };
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
+  const g = e.target.closest(".el, .memo-card");
+  if (!g) {
+    // empty area → rubber-band select / 空白处框选
+    if (!e.shiftKey) clearSel();
+    const pt = clientToSvg(e.clientX, e.clientY);
+    band = { x0: pt.x, y0: pt.y, base: selection.kind === "el" ? selection.ids.slice() : [] };
+    canvas.setPointerCapture(e.pointerId);
+    renderCanvas(); renderProps();
+    return;
+  }
+  const id = g.dataset.id, kind = g.dataset.kind;
+  if (kind === "memo") {
+    setSel("memo", [id]);
+  } else {
+    const mates = groupMates(id);
+    if (e.shiftKey && selection.kind === "el") {
+      let ids = selection.ids.slice();
+      const allIn = mates.every(m => ids.indexOf(m) >= 0);
+      ids = allIn ? ids.filter(m => mates.indexOf(m) < 0) : ids.concat(mates.filter(m => ids.indexOf(m) < 0));
+      setSel("el", ids);
+    } else if (!(selection.kind === "el" && isSel(id))) {
+      setSel("el", mates);   // not yet selected → select its group
+    }
+  }
+  // begin moving every selected object / 拖动所有已选
+  const items = selObjs().map(o => ({ o, ox: o.x, oy: o.y }));
+  drag = { mode: "move", startX: e.clientX, startY: e.clientY, items };
+  canvas.setPointerCapture(e.pointerId);
+  renderCanvas(); renderProps();
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  const scale = canvas.getBoundingClientRect().width / cw();
+  if (band) {
+    const pt = clientToSvg(e.clientX, e.clientY);
+    const bx = Math.min(band.x0, pt.x), by = Math.min(band.y0, pt.y);
+    const bw = Math.abs(pt.x - band.x0), bh = Math.abs(pt.y - band.y0);
+    const hit = [];
+    activePage().elements.forEach(el => {
+      if (el.x < bx + bw && el.x + el.w > bx && el.y < by + bh && el.y + el.h > by) {
+        groupMates(el.id).forEach(m => { if (hit.indexOf(m) < 0) hit.push(m); });
+      }
+    });
+    const ids = band.base.slice();
+    hit.forEach(m => { if (ids.indexOf(m) < 0) ids.push(m); });
+    setSel("el", ids);
+    scheduleCanvas(() => drawBand(bx, by, bw, bh));
+    return;
+  }
+  if (!drag) return;
+  const dx = (e.clientX - drag.startX) / scale;
+  const dy = (e.clientY - drag.startY) / scale;
+  if ((dx || dy) && !drag.snapped) { snapshot(); drag.snapped = true; }  // history once per gesture
+  if (drag.mode === "move") {
+    const its = drag.items;
+    let ndx = dx, ndy = dy;
+    // selection bounding box at origin (no delta) / 选区原始外框
+    const ax0 = Math.min(...its.map(it => it.ox));
+    const ay0 = Math.min(...its.map(it => it.oy));
+    const ax1 = Math.max(...its.map(it => it.ox + it.o.w));
+    const ay1 = Math.max(...its.map(it => it.oy + it.o.h));
+    const snap = smartSnap(ax0 + ndx, ay0 + ndy, ax1 + ndx, ay1 + ndy);
+    ndx += snap.ox; ndy += snap.oy;
+    // clamp the WHOLE group's delta so the group stays rigid at the edges
+    // 对整组的位移做钳制，避免靠边时各元素分别截断导致变形
+    ndx = clamp(ndx, -ax0, cw() - ax1);
+    ndy = clamp(ndy, -ay0, ch() - ay1);
+    its.forEach(it => {
+      it.o.x = it.ox + ndx;
+      it.o.y = it.oy + ndy;
+    });
+    scheduleCanvas(() => snap.guides.forEach(drawGuide));
+  } else if (drag.mode === "resize") {
+    let w = drag.ow + dx, h = drag.oh + dy;
+    if (snapGrid) { w = Math.round(w / GRID) * GRID; h = Math.round(h / GRID) * GRID; }
+    drag.obj.w = clamp(w, 24, cw() - drag.obj.x);
+    drag.obj.h = clamp(h, 20, ch() - drag.obj.y);
+    scheduleCanvas();
+  }
+});
+
+canvas.addEventListener("pointerup", () => {
+  if (band) { band = null; renderCanvas(); renderProps(); save(); return; }   // clear band rect
+  if (drag) { drag = null; renderCanvas(); renderProps(); save(); }            // clear snap guides
+});
+
+// snap the selection bbox to other elements' edges/centers & canvas guides; else grid
+// 将选区外框吸附到其他元素的边/中心和画布参考线；否则吸附到网格
+function smartSnap(bx0, by0, bx1, by1) {
+  const T = 6 / zoom;
+  const selIds = new Set(selection.ids);
+  const xs = [0, cw() / 2, cw()], ys = [0, ch() / 2, ch()];
+  activePage().elements.forEach(el => {
+    if (selIds.has(el.id)) return;
+    xs.push(el.x, el.x + el.w / 2, el.x + el.w);
+    ys.push(el.y, el.y + el.h / 2, el.y + el.h);
+  });
+  const guides = [];
+  const findSnap = (edges, cands) => {
+    let best = null;
+    edges.forEach(edge => cands.forEach(c => {
+      const d = c - edge;
+      if (Math.abs(d) <= T && (best === null || Math.abs(d) < Math.abs(best.d))) best = { d, c };
+    }));
+    return best;
+  };
+  let ox = 0, oy = 0;
+  const sx = findSnap([bx0, (bx0 + bx1) / 2, bx1], xs);
+  const sy = findSnap([by0, (by0 + by1) / 2, by1], ys);
+  if (sx) { ox = sx.d; guides.push({ x: sx.c }); }
+  else if (snapGrid) ox = Math.round(bx0 / GRID) * GRID - bx0;
+  if (sy) { oy = sy.d; guides.push({ y: sy.c }); }
+  else if (snapGrid) oy = Math.round(by0 / GRID) * GRID - by0;
+  return { ox, oy, guides };
+}
+function drawGuide(gd) {
+  const ln = document.createElementNS(SVGNS, "line");
+  if (gd.x != null) { ln.setAttribute("x1", gd.x); ln.setAttribute("y1", 0); ln.setAttribute("x2", gd.x); ln.setAttribute("y2", ch()); }
+  else { ln.setAttribute("x1", 0); ln.setAttribute("y1", gd.y); ln.setAttribute("x2", cw()); ln.setAttribute("y2", gd.y); }
+  ln.setAttribute("stroke", "#ff4db8"); ln.setAttribute("stroke-width", "1");
+  ln.setAttribute("pointer-events", "none");
+  overlay.appendChild(ln);
+}
+
+// double-click an element to edit its text inline / 双击元素直接编辑文本
+canvas.addEventListener("dblclick", (e) => {
+  if (mode !== "visual") return;
+  const g = e.target.closest(".el");
+  if (!g) return;
+  const el = activePage().elements.find(x => x.id === g.dataset.id);
+  if (!el || el.type === "include") return;
+  setSel("el", [el.id]); renderCanvas(); renderProps();
+  editTextInline(el);
+});
+
+// right-click an element → context menu (reuses the popup menu) / 右键元素 → 上下文菜单
+canvas.addEventListener("contextmenu", (e) => {
+  if (mode !== "visual") return;
+  const g = e.target.closest(".el");
+  if (!g) return;
+  e.preventDefault();
+  const id = g.dataset.id;
+  if (!(selection.kind === "el" && isSel(id))) { setSel("el", groupMates(id)); renderCanvas(); renderProps(); }
+  openPopmenu(e.clientX, e.clientY, [
+    { label: "Copy", action: copySel },
+    { label: "Duplicate", action: duplicateSel },
+    ...(clipboard.length ? [{ label: "Paste", action: pasteSel }] : []),
+    { sep: true },
+    { label: "Bring to front", action: () => reorder("front") },
+    { label: "Send to back", action: () => reorder("back") },
+    { sep: true },
+    { label: "Delete", danger: true, action: deleteSelected },
+  ]);
+});
+
+let inlineEditor = null;
+function editTextInline(el) {
+  if (inlineEditor) inlineEditor.remove();
+  const r = canvas.getBoundingClientRect();
+  const scale = r.width / cw();
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.value = el.text || ""; inp.className = "inline-edit";
+  inp.style.left = (r.left + el.x * scale) + "px";
+  inp.style.top  = (r.top + el.y * scale) + "px";
+  inp.style.width = Math.max(60, el.w * scale) + "px";
+  document.body.appendChild(inp);
+  inlineEditor = inp;
+  inp.focus(); inp.select();
+  const orig = el.text || "";
+  editSnap = JSON.stringify(project);   // pre-edit state; pushed on first change
+  let done = false;
+  const commit = (keep) => {
+    if (done) return; done = true;
+    el.text = keep ? inp.value : orig;   // Escape restores original / Esc 还原
+    if (!keep) editSnap = null;          // no change kept → discard pending snapshot
+    save();
+    inp.remove(); inlineEditor = null; renderCanvas(); renderProps();
+  };
+  inp.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Enter") { ev.preventDefault(); commit(true); }
+    else if (ev.key === "Escape") { ev.preventDefault(); commit(false); }
+  });
+  inp.addEventListener("blur", () => commit(true));
+  inp.addEventListener("input", () => { flushEditSnap(); el.text = inp.value; renderCanvas(); });
+}
+
+function clientToSvg(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  const scale = r.width / cw();
+  return { x: (cx - r.left) / scale, y: (cy - r.top) / scale };
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ====================================================================
+// Zoom / 缩放
+// ====================================================================
+function fitZoom() {
+  const s = $("#stage");
+  const availW = s.clientWidth - 64;   // padding margin / 留白
+  const availH = s.clientHeight - 64;
+  const z = Math.min(availW / cw(), availH / ch());
+  return clamp(z, 0.1, 1);             // never upscale past 100% / 不放大超过 100%
+}
+function applyZoom() {
+  if (zoomFit) zoom = fitZoom();
+  canvas.setAttribute("width", cw() * zoom);
+  canvas.setAttribute("height", ch() * zoom);
+  const zv = $("#zVal"); if (zv) zv.value = Math.round(zoom * 100);
+  const zf = $("#zFit"); if (zf) zf.classList.toggle("active", zoomFit);
+}
+function setZoom(z) { zoomFit = false; zoom = clamp(z, 0.1, 4); applyZoom(); savePrefs(); }
+
+$("#zOut").onclick = () => setZoom(Math.round((zoom - 0.1) * 10) / 10);
+$("#zIn").onclick = () => setZoom(Math.round((zoom + 0.1) * 10) / 10);
+$("#zFit").onclick = () => { zoomFit = true; applyZoom(); savePrefs(); };
+$("#zVal").onchange = (e) => { const v = parseInt(e.target.value); if (v) setZoom(v / 100); };
+window.addEventListener("resize", () => { if (zoomFit) applyZoom(); });
+
+// ====================================================================
+// Toolbar actions / 工具栏动作
+// ====================================================================
+// listen on document so both the toolbar and the collapsed mini-bar work
+// 监听 document，让工具栏和折叠后的细条都生效
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const act = btn.dataset.act;
+  if (act === "newpage") {
+    const name = prompt("New page name:", "Page " + (project.pages.length + 1));
+    if (name !== null) { snapshot(); const p = createPage(name.trim() || undefined); project.activePageId = p.id; clearSel(); render(); }
+  } else if (act === "export") {
+    exportJSON();
+  } else if (act === "import") {
+    $("#fileInput").click();
+  } else if (act === "clear") {
+    clearAll();
+  } else if (act === "view") {
+    setMode(btn.dataset.mode);
+  } else if (act === "link") {
+    if (selection.kind === "el" && selection.ids.length === 1) { toast("Pick target page in the panel →"); const s = $("#pLink"); if (s) s.focus(); }
+    else toast("Select an element first");
+  } else if (act === "foldmemo") {
+    memoVisible = !memoVisible;
+    $("#toggleMemo").classList.toggle("active", !memoVisible);
+    renderCanvas(); savePrefs();
+  } else if (act === "toggletb") {
+    toggleToolbar();
+  } else if (act === "snap") {
+    snapGrid = !snapGrid;
+    $("#snapBtn").classList.toggle("active", snapGrid);
+    toast(snapGrid ? "Snap on" : "Snap off"); savePrefs();
+  }
+});
+
+// collapse / expand the toolbar; the toggle stays put and flips its glyph
+// 折叠/展开工具栏；按钮位置不变，仅切换箭头
+function toggleToolbar() {
+  const collapsed = document.body.classList.toggle("tb-collapsed");
+  const btn = $("#tbToggle");
+  btn.textContent = collapsed ? "▼" : "▲";
+  btn.title = collapsed ? "Expand toolbar" : "Collapse toolbar";
+  if (zoomFit) applyZoom();   // layout changed → refit / 布局变化后重新适应
+  savePrefs();
+}
+
+// canvas size controls / 画面尺寸控件
+function buildCanvasPresets() {
+  const sel = $("#canvasPreset");
+  sel.innerHTML = CANVAS_PRESETS.map((p, i) => `<option value="${i}">${p.label}</option>`).join("") +
+    `<option value="custom">Custom</option>`;
+}
+$("#canvasPreset").addEventListener("change", (e) => {
+  const v = e.target.value;
+  if (v === "custom") return;
+  const p = CANVAS_PRESETS[+v];
+  if (p) { snapshot(); applyCanvasSize(p.w, p.h); }
+});
+$("#canvasW").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) { snapshot(); applyCanvasSize(v, activePage().canvasH); } });
+$("#canvasH").addEventListener("change", (e) => { const v = parseInt(e.target.value); if (v) { snapshot(); applyCanvasSize(activePage().canvasW, v); } });
+
+// ---- view mode switch / 视图切换 ----
+function setMode(m) {
+  if (mode === "code" && m !== "code" && codeDirty) {
+    if (confirm("Unapplied code edits. Apply to design?\n(Cancel = discard)")) {
+      if (!applyCode()) return; // parse failed → stay in code
+    } else { codeDirty = false; }
+  }
+  mode = m;
+  document.body.className = "mode-" + m;
+  document.querySelectorAll('[data-act="view"]').forEach(b => b.classList.toggle("active", b.dataset.mode === m));
+  clearSel();
+  if (m === "code") renderCode();
+  render();
+  if (m === "preview") toast("Preview: click 🔗 elements to jump");
+}
+
+// ====================================================================
+// Import / Export JSON / 导入导出
+// ====================================================================
+function exportJSON() {
+  download(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), "ui_prompted-project.json");
+  toast("Exported JSON");
+}
+
+// reset the whole project to a blank state (confirm + undoable) / 清空全部（确认+可撤销）
+function clearAll() {
+  if (!confirm("Clear everything?\nThis removes ALL pages and elements.\n(You can still undo with ⌘/Ctrl+Z)")) return;
+  snapshot();
+  freshProject();
+  clearSel();
+  render();
+  toast("Cleared — ⌘/Ctrl+Z to undo");
+}
+$("#fileInput").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data.pages || !Array.isArray(data.pages)) throw new Error("invalid");
+      project = data; migrate();
+      if (!project.activePageId) project.activePageId = project.pages[0].id;
+      clearSel(); render();
+      toast("Imported");
+    } catch (err) { toast("Import failed"); }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ====================================================================
+// Markdown <-> model / Markdown 与模型互转
+// ====================================================================
+function pageNameById(id) { const p = project.pages.find(x => x.id === id); return p ? p.name : "?"; }
+function esc(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;"); }
+function r(n) { return Math.round(n); }
+
+// one element's XML line(s) with the given indent / 单个元素的 XML 行
+function emitEl(el, ind) {
+  let s = "";
+  if (el.note && el.note.trim()) {
+    s += `${ind}<!-- ${el.note.replace(/\r?\n/g, " ").replace(/--+/g, "—").trim()} -->\n`;
+  }
+  let attrs;
+  if (el.type === "include") {
+    attrs = [`ref="${esc(pageNameById(el.ref))}"`, `x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`];
+  } else {
+    attrs = [`x="${r(el.x)}"`, `y="${r(el.y)}"`, `w="${r(el.w)}"`, `h="${r(el.h)}"`,
+             `color="${el.color}"`, `opacity="${el.opacity != null ? el.opacity : 1}"`];
+    if (el.text) attrs.push(`text="${esc(el.text)}"`);
+    if (el.textPos) attrs.push(`textpos="${el.textPos}"`);
+    if (el.linkTo) attrs.push(`link="${esc(pageNameById(el.linkTo))}"`);
+  }
+  s += `${ind}<${el.type} ${attrs.join(" ")}/>\n`;
+  return s;
+}
+
+function buildMarkdown() {
+  let md = "";
+  md += "# UI Design\n\n";
+
+  const target = project.target || "Android";
+  const home = project.pages.find(p => p.isHome);
+  md += `> Target: ${target}\n`;
+  md += `> Entry point (first screen shown on app launch): ${home ? "`" + home.name + "`" : "—"}\n\n`;
+
+  project.pages.forEach(p => {
+    md += `## ${p.name}${p.isHome ? " (entry point)" : ""}\n\n`;
+    md += "```xml\n";
+    md += `<screen name="${esc(p.name)}"${p.isHome ? ' home="true"' : ""} width="${p.canvasW}" height="${p.canvasH}">\n`;
+    const emitted = new Set();   // groups already written / 已写出的组
+    p.elements.forEach(el => {
+      if (el.groupId) {
+        if (emitted.has(el.groupId)) return;       // group written already
+        emitted.add(el.groupId);
+        md += `  <group>\n`;
+        p.elements.filter(x => x.groupId === el.groupId).forEach(ge => { md += emitEl(ge, "    "); });
+        md += `  </group>\n`;
+      } else {
+        md += emitEl(el, "  ");
+      }
+    });
+    md += `</screen>\n`;
+    md += "```\n\n";
+
+    if (p.memos.length) {
+      md += `### 💭 Vibe Memos\n`;
+      p.memos.forEach(m => { md += `- \`@(${r(m.x)},${r(m.y)})\` ${(m.text || "").replace(/\n/g, " ").trim() || "(empty)"}\n`; });
+      md += "\n";
+    }
+    const links = p.elements.filter(e => e.linkTo);
+    if (links.length) {
+      md += `### 🔗 Links\n`;
+      links.forEach(e => { md += `- **${e.type}**${e.text ? ` "${e.text}"` : ""} → **${pageNameById(e.linkTo)}**\n`; });
+      md += "\n";
+    }
+  });
+  return md;
+}
+
+// ---- parse Markdown back into the model / 将 Markdown 解析回模型 ----
+function parseMarkdown(md) {
+  const proj = { pages: [], activePageId: null, seq: 0 };
+  let n = 0;
+  const id = (pre) => pre + (++n);
+  const linkFix = [], refFix = [];
+
+  // target: from readable "> Target: X" line (or legacy [TARGET:] marker)
+  const targetM = md.match(/^>\s*Target:\s*(.+?)\s*$/m) || md.match(/\[TARGET:\s*([^\]]*)\]/);
+  proj.target = targetM ? targetM[1].trim() : "Android";
+  // entry/home: prefer screen home="true"; fall back to the readable line or legacy [HOME:]
+  const homeM = md.match(/Entry point[^\n]*:\s*`?([^`\n]+?)`?\s*$/m) || md.match(/\[HOME:\s*([^\]]*)\]/);
+  const homeName = homeM ? homeM[1].trim() : null;
+
+  const parts = md.split(/^##\s+/m).slice(1);
+  if (!parts.length) throw new Error("No pages (## headings) found");
+
+  parts.forEach(part => {
+    const nl = part.indexOf("\n");
+    let header = (nl >= 0 ? part.slice(0, nl) : part).trim().replace(/\((entry point|Home)\)\s*$/i, "").trim();
+    const bodyTxt = nl >= 0 ? part.slice(nl + 1) : "";
+    const page = { id: id("p"), name: header || ("Page " + n), isHome: false, elements: [], memos: [], canvasW: 360, canvasH: 720 };
+
+    const xmlM = bodyTxt.match(/```xml\s*([\s\S]*?)```/);
+    if (xmlM) parseScreen(xmlM[1], page, id, linkFix, refFix);
+
+    const memoM = bodyTxt.match(/###[^\n]*Vibe Memos[^\n]*\n([\s\S]*?)(?=\n###|\n```|$)/);
+    if (memoM) {
+      memoM[1].split("\n").forEach(ln => {
+        const mm = ln.match(/^-\s*`?@\((\d+),\s*(\d+)\)`?\s*(.*)$/);
+        if (mm) page.memos.push({ id: id("m"), x: +mm[1], y: +mm[2], w: 180, h: 70, text: (mm[3].trim() === "(empty)" ? "" : mm[3].trim()) });
+      });
+    }
+    proj.pages.push(page);
+  });
+
+  const byName = (nm) => proj.pages.find(p => p.name === nm);
+  linkFix.forEach(({ el, name }) => { const p = byName(name); el.linkTo = p ? p.id : null; });
+  refFix.forEach(({ el, name }) => { const p = byName(name); el.ref = p ? p.id : null; });
+
+  // home / 入口
+  let home = homeName ? byName(homeName) : null;
+  if (!home) home = proj.pages.find(p => p.isHome) || proj.pages[0];
+  proj.pages.forEach(p => p.isHome = false);
+  if (home) home.isHome = true;
+
+  proj.seq = n;
+  proj.activePageId = (home || proj.pages[0]).id;
+  return proj;
+}
+
+function parseScreen(xml, page, id, linkFix, refFix) {
+  const doc = new DOMParser().parseFromString("<root>" + xml + "</root>", "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("XML parse error in " + page.name);
+  const screen = doc.querySelector("screen") || doc.documentElement;
+  if (screen.getAttribute && screen.getAttribute("width")) page.canvasW = parseInt(screen.getAttribute("width")) || 360;
+  if (screen.getAttribute && screen.getAttribute("height")) page.canvasH = parseInt(screen.getAttribute("height")) || 720;
+  if (screen.getAttribute && screen.getAttribute("home") === "true") page.isHome = true;
+
+  // parse one element node (not <group>) / 解析单个元素节点
+  function parseEl(node, note, groupId) {
+    const type = node.tagName.toLowerCase();
+    const num = (a, d) => { const v = node.getAttribute(a); return v != null && v !== "" ? parseFloat(v) : d; };
+    const el = {
+      id: id("e"), type,
+      x: num("x", 0), y: num("y", 0), w: num("w", 100), h: num("h", 40),
+      text: node.getAttribute("text") || "", note,
+      textPos: node.getAttribute("textpos") || null,
+      color: node.getAttribute("color") || "#ffffff",
+      opacity: node.getAttribute("opacity") != null ? parseFloat(node.getAttribute("opacity")) : 1,
+      linkTo: null, ref: null, groupId: groupId || null,
+    };
+    const lk = node.getAttribute("link"); if (lk) linkFix.push({ el, name: lk });
+    const rf = node.getAttribute("ref"); if (rf) refFix.push({ el, name: rf });
+    page.elements.push(el);
+  }
+
+  let note = "";
+  screen.childNodes.forEach(node => {
+    if (node.nodeType === 8) { note = (node.nodeValue || "").trim(); return; }
+    if (node.nodeType !== 1) return;
+    if (node.tagName.toLowerCase() === "group") {     // <group> wrapper / 组
+      const gid = id("g");
+      let gnote = "";
+      node.childNodes.forEach(c => {
+        if (c.nodeType === 8) { gnote = (c.nodeValue || "").trim(); return; }
+        if (c.nodeType === 1) { parseEl(c, gnote, gid); gnote = ""; }
+      });
+    } else {
+      parseEl(node, note, null);
+    }
+    note = "";
+  });
+}
+
+// ====================================================================
+// Code editor / 代码编辑器
+// ====================================================================
+const codeArea = $("#codeArea");
+const codeHl = $("#codeHl").firstElementChild;
+
+function renderCode() {
+  codeArea.value = buildMarkdown();
+  updateHighlight();
+  codeDirty = false;
+}
+function updateHighlight() {
+  codeHl.innerHTML = highlightCode(codeArea.value) + "\n";
+  codeHl.parentElement.scrollTop = codeArea.scrollTop;
+}
+function applyCode() {
+  try {
+    const proj = parseMarkdown(codeArea.value);
+    snapshot();
+    project = proj;
+    migrate();              // fill defaults on the new project / 为新项目补默认值
+    clearSel(); codeDirty = false;
+    toast("Applied to design");
+    return true;
+  } catch (err) {
+    toast("Parse failed: " + err.message);
+    return false;
+  }
+}
+
+codeArea.addEventListener("input", () => { codeDirty = true; updateHighlight(); });
+codeArea.addEventListener("scroll", () => { codeHl.parentElement.scrollTop = codeArea.scrollTop; codeHl.parentElement.scrollLeft = codeArea.scrollLeft; });
+$("#cApply").onclick = () => { if (applyCode()) { setMode("visual"); } };
+$("#cRegen").onclick = () => {
+  if (codeDirty && !confirm("Discard edits and regenerate?")) return;
+  renderCode(); toast("Regenerated");
+};
+$("#cCopy").onclick = () => copyText(codeArea.value);
+$("#cDownload").onclick = () => { download(new Blob([codeArea.value], { type: "text/markdown" }), "android-ui.md"); toast("Downloaded"); };
+
+// lightweight syntax highlighter (XML + Markdown) / 轻量语法高亮
+function highlightCode(src) {
+  let s = src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const comments = [];
+  s = s.replace(/&lt;!--[\s\S]*?--&gt;/g, (m) => { comments.push(m); return "~~CMT" + (comments.length - 1) + "~~"; });
+  // xml tags + attributes
+  s = s.replace(/(&lt;\/?)([a-zA-Z][\w-]*)([\s\S]*?)(\/?&gt;)/g, (m, open, name, attrs, close) => {
+    const a = attrs.replace(/([\w-]+)(=)("[^"]*"|'[^']*')/g,
+      (mm, nm, eq, val) => `<span class="at">${nm}</span>${eq}<span class="vl">${val}</span>`);
+    return `<span class="pu">${open}</span><span class="tg">${name}</span>${a}<span class="pu">${close}</span>`;
+  });
+  // markdown headings & fences
+  s = s.replace(/^(#{1,6} .*)$/gm, '<span class="hd">$1</span>');
+  s = s.replace(/^(```.*)$/gm, '<span class="fn">$1</span>');
+  // restore comments
+  s = s.replace(/~~CMT(\d+)~~/g, (m, i) => `<span class="c">${comments[+i]}</span>`);
+  return s;
+}
+
+function copyText(t) {
+  if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => toast("Copied"), () => fallbackCopy(t));
+  else fallbackCopy(t);
+}
+function fallbackCopy(t) {
+  const ta = document.createElement("textarea");
+  ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } catch (e) {}
+  ta.remove(); toast("Copied");
+}
+
+// ====================================================================
+// Keyboard / 键盘
+// ====================================================================
+document.addEventListener("keydown", (e) => {
+  const typing = document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA";
+  if (typing || mode !== "visual") return;
+  const mod = e.metaKey || e.ctrlKey;   // ⌘ (Mac) or Ctrl (Windows) / 跨平台
+  const k = e.key.toLowerCase();
+
+  // ---- undo / redo ----
+  if (mod && k === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+  if (mod && k === "y") { e.preventDefault(); redo(); return; }
+  // ---- copy / paste / duplicate ----
+  if (mod && k === "c") { e.preventDefault(); copySel(); return; }
+  if (mod && k === "v") { e.preventDefault(); pasteSel(); return; }
+  if (mod && k === "d") { e.preventDefault(); duplicateSel(); return; }
+  // ---- select all / group ----
+  if (mod && k === "a") { e.preventDefault(); setSel("el", activePage().elements.map(el => el.id)); render(); return; }
+  if (mod && k === "g") { e.preventDefault(); if (e.shiftKey) ungroupSelection(); else groupSelection(); return; }
+  // ---- z-order: ] forward / [ backward, Shift → front / back ----
+  if (mod && (k === "]" || k === "}")) { e.preventDefault(); reorder(e.shiftKey ? "front" : "forward"); return; }
+  if (mod && (k === "[" || k === "{")) { e.preventDefault(); reorder(e.shiftKey ? "back" : "backward"); return; }
+  // ---- delete ----
+  if ((e.key === "Delete" || e.key === "Backspace") && selection.ids.length) { e.preventDefault(); deleteSelected(); return; }
+  // ---- arrow-key nudge (1px, Shift = 10px) ----
+  const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  if (arrows[e.key] && selection.ids.length) {
+    e.preventDefault();
+    if (!e.repeat) snapshot();
+    const step = e.shiftKey ? 10 : 1;
+    const [sx, sy] = arrows[e.key];
+    selObjs().forEach(o => {
+      o.x = clamp(o.x + sx * step, 0, cw() - (o.w || 0));
+      o.y = clamp(o.y + sy * step, 0, ch() - (o.h || 0));
+    });
+    renderCanvas(); renderProps(); save();
+  }
+});
+
+// lazy edit-session history: capture pre-state on focus, push it to undo ONLY on
+// the first actual change (avoids polluting history with no-op focus events)
+// 惰性编辑历史：聚焦时记下前态，仅在首次真正修改时入栈（避免空操作污染历史）
+let editSnap = null;
+function flushEditSnap() {
+  if (editSnap === null) return;
+  undoStack.push(editSnap);
+  if (undoStack.length > HMAX) undoStack.shift();
+  redoStack.length = 0;
+  editSnap = null;
+}
+$("#props").addEventListener("focusin", (e) => {
+  if (e.target.matches("input, textarea, select")) editSnap = JSON.stringify(project);
+});
+$("#props").addEventListener("input", flushEditSnap);
+$("#props").addEventListener("change", flushEditSnap);
+
+// ====================================================================
+// Misc / 杂项
+// ====================================================================
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+}
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+// ====================================================================
+// Boot / 启动
+// ====================================================================
+buildCanvasPresets();
+if (!load()) freshProject();
+if (!project.pages || !project.pages.length) freshProject();
+migrate();
+loadPrefs();
+// apply restored UI prefs / 应用恢复的界面偏好
+$("#snapBtn").classList.toggle("active", snapGrid);
+$("#toggleMemo").classList.toggle("active", !memoVisible);
+if (document.body.classList.contains("tb-collapsed")) { $("#tbToggle").textContent = "▼"; $("#tbToggle").title = "Expand toolbar"; }
+document.querySelector('[data-mode="visual"]').classList.add("active");
+render();
