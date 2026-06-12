@@ -13,10 +13,11 @@
 //
 // 公开 API / Public API (project-independent — caller assigns real ids):
 //   HtmlImport.importHtmlFiles(fileList, { canvasW, maxElements?, htmlFile? })
-//     → Promise<{ pages: [{ name, elements, suggestedW, suggestedH }],
+//     → Promise<{ pages: [{ key, name, elements, suggestedW, suggestedH }],
 //                 title, warnings, stats }>
 //   elements carry NO id/groupId — instead an import-local `groupKey`, and
-//   iframe placeholder rects carry `linkToPage` = name of the sub-page.
+//   iframe placeholder rects carry `linkToPage` = `key` of the sub-page
+//   (a stable key, NOT the display name — names may collide).
 // ====================================================================
 (function () {
 
@@ -40,7 +41,8 @@
     return map;
   }
 
-  // longest-suffix match first, then basename / 先按路径后缀匹配，再按文件名
+  // exact path → suffix match (fewest extra segments wins) → basename
+  // 先精确路径，再后缀匹配（多余前缀最短者优先，避免吸到别目录同名文件），最后按文件名
   function resolveRef(ref, fileMap) {
     if (!ref || /^(https?:|data:|blob:|javascript:|#|mailto:)/i.test(ref)) return null;
     let p = normPath(String(ref).split(/[?#]/)[0]).toLowerCase();
@@ -48,7 +50,11 @@
     if (p.startsWith("/")) p = p.slice(1);
     if (!p) return null;
     if (fileMap.has(p)) return fileMap.get(p);
-    for (const [k, f] of fileMap) { if (k.endsWith("/" + p)) return f; }
+    let best = null, bestLen = Infinity;
+    for (const [k, f] of fileMap) {
+      if (k.endsWith("/" + p) && k.length < bestLen) { best = f; bestLen = k.length; }
+    }
+    if (best) return best;
     return fileMap.get(p.split("/").pop()) || null;
   }
 
@@ -81,6 +87,20 @@
   // 把文档变成自包含、无脚本、无图片实体（只留框）
   async function flattenDoc(doc, fileMap, warnings) {
     doc.querySelectorAll("script, base, noscript").forEach(n => n.remove());
+    // strip the remaining active-content vectors too: inline event handlers,
+    // javascript: URLs, plugin tags. The measuring iframe is sandboxed, but the
+    // fallback path (engines that hide contentDocument under sandbox) drops the
+    // sandbox — so the markup itself must be inert.
+    // 除 <script> 外的活性内容也一并拔除：内联事件、javascript: URL、插件标签。
+    // 测量 iframe 有沙箱，但兜底路径会摘掉沙箱，所以标记本身必须无害。
+    doc.querySelectorAll("object, embed, applet").forEach(n => n.remove());
+    const URL_ATTRS = ["href", "src", "action", "formaction", "xlink:href", "data"];
+    for (const el of doc.querySelectorAll("*")) {
+      for (const name of el.getAttributeNames()) {
+        if (/^on/i.test(name)) el.removeAttribute(name);
+        else if (URL_ATTRS.includes(name) && /^\s*javascript:/i.test(el.getAttribute(name) || "")) el.removeAttribute(name);
+      }
+    }
     for (const lk of [...doc.querySelectorAll('link[rel~="stylesheet"]')]) {
       const href = lk.getAttribute("href");
       const f = resolveRef(href, fileMap);
@@ -158,7 +178,12 @@
       let doc = null;
       try { doc = iframe.contentDocument; } catch (e) { /* sandbox quirk */ }
       if (!doc) {
-        iframe.removeAttribute("sandbox");   // some engines hide the doc under sandbox
+        // some engines hide the doc under sandbox. Dropping the sandbox means
+        // the markup sanitation in flattenDoc() is the ONLY script barrier on
+        // this path — flattenDoc must stay strict (on*/javascript:/plugins).
+        // 个别引擎在沙箱下拿不到 doc。摘掉沙箱后唯一的防线是 flattenDoc 的
+        // 清洗（on* / javascript: / 插件标签），那边必须保持严格。
+        iframe.removeAttribute("sandbox");
         doc = iframe.contentDocument;
       }
       if (!doc) throw new Error("cannot access the measuring document");
@@ -180,6 +205,9 @@
   // ------------------------------------------------------------------
   // Style helpers / 样式辅助
   // ------------------------------------------------------------------
+  // input is getComputedStyle output only — always rgb()/rgba(); anything else
+  // (keywords, hex, color()) returns null and counts as "no background"
+  // 输入仅限 getComputedStyle 的 rgb()/rgba()；其余返回 null 视作无底色
   function parseColor(c) {
     const m = String(c || "").match(/rgba?\(([^)]+)\)/);
     if (!m) return null;
@@ -292,6 +320,9 @@
         const el = makeEl("rect", node, cs, r, groupKey);
         el.linkToPage = "__IFRAME__" + (iframes.length + 1);   // placeholder, renamed by importHtmlFiles
         el.note = ("iframe: " + (node.getAttribute("data-ui-src") || "inline srcdoc")).slice(0, 80);
+        // push() checked here (unlike the leaf branches) because the iframes[]
+        // side effect must stay in sync with the emitted placeholder
+        // 这里特意检查 push() 的返回值：iframes[] 必须与占位框一一对应
         if (push(el)) {
           iframes.push({
             src: node.getAttribute("data-ui-src") || null,
@@ -423,7 +454,9 @@
     const prepared = await prepareHtmlFile(main, fileMap, warnings);
     const res = await renderAndMeasure(prepared.html, opts);
     warnings.push(...res.warnings);
-    const pages = [{ name: prepared.title, elements: res.elements, suggestedW: opts.canvasW, suggestedH: res.suggestedH }];
+    // page `key` is the stable wiring handle for linkToPage (names may collide)
+    // key 是 linkToPage 的稳定接线句柄（显示名可能重复）
+    const pages = [{ key: "pg0", name: prepared.title, elements: res.elements, suggestedW: opts.canvasW, suggestedH: res.suggestedH }];
     const stats = { emitted: res.stats.emitted, visited: res.stats.visited, truncated: res.stats.truncated };
 
     // iframes → sub-pages, ONE level only (nested iframes stay plain boxes)
@@ -452,8 +485,9 @@
       } catch (e) {
         warnings.push("iframe import failed: " + (e && e.message ? e.message : e));
       }
-      pages.push({ name, elements: subEls, suggestedW: info.w, suggestedH: subH });
-      pages[0].elements.forEach(e => { if (e.linkToPage === "__IFRAME__" + (i + 1)) e.linkToPage = name; });
+      const key = "pg" + (i + 1);
+      pages.push({ key, name, elements: subEls, suggestedW: info.w, suggestedH: subH });
+      pages[0].elements.forEach(e => { if (e.linkToPage === "__IFRAME__" + (i + 1)) e.linkToPage = key; });
     }
 
     return { pages, title: prepared.title, warnings, stats };
