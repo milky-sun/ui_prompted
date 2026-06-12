@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  easy-xml — Android UI 草图工具 / Android UI sketch tool
+  ui_prompted — Android UI 草图工具 / Android UI sketch tool
   单页 HTML，无需构建。在浏览器中打开即可使用。
   Single-page HTML, no build step. Just open in a browser.
 -->
@@ -8,7 +8,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>easy-xml · Android UI Sketch</title>
+<title>ui_prompted · Android UI Sketch</title>
 <style>
   :root {
     --bg: #1e1f24;
@@ -387,9 +387,10 @@
 <script>
 "use strict";
 // ====================================================================
-// easy-xml — state & logic / 状态与逻辑
+// ui_prompted — state & logic / 状态与逻辑
 // ====================================================================
-const STORE_KEY = "easy-xml-project-v1";
+const STORE_KEY = "ui_prompted-project-v1";
+const STORE_KEY_LEGACY = "easy-xml-project-v1";  // pre-rename key; read once for migration
 
 // Default element sizes / 默认尺寸 (color optional: foreground for text-like)
 const DEFAULTS = {
@@ -458,7 +459,8 @@ function nextId(prefix) {
 }
 
 // ---- Persistence / 持久化 (localStorage) ----
-const PREFS_KEY = "easy-xml-prefs-v1";
+const PREFS_KEY = "ui_prompted-prefs-v1";
+const PREFS_KEY_LEGACY = "easy-xml-prefs-v1";  // pre-rename key; read once for migration
 let saveTimer = null;
 function save() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300); }  // debounced
 function saveNow() {
@@ -468,7 +470,7 @@ function saveNow() {
 }
 function load() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = localStorage.getItem(STORE_KEY) || localStorage.getItem(STORE_KEY_LEGACY);
     if (raw) { project = JSON.parse(raw); return true; }
   } catch (e) { console.warn("load failed", e); }
   return false;
@@ -484,7 +486,7 @@ function savePrefs() {
 }
 function loadPrefs() {
   try {
-    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || localStorage.getItem(PREFS_KEY_LEGACY) || "{}");
     if (typeof p.snapGrid === "boolean") snapGrid = p.snapGrid;
     if (typeof p.memoVisible === "boolean") memoVisible = p.memoVisible;
     if (typeof p.zoomFit === "boolean") zoomFit = p.zoomFit;
@@ -1703,7 +1705,7 @@ function setMode(m) {
 // Import / Export JSON / 导入导出
 // ====================================================================
 function exportJSON() {
-  download(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), "easy-xml-project.json");
+  download(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), "ui_prompted-project.json");
   toast("Exported JSON");
 }
 

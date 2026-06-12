@@ -1,4 +1,4 @@
-# easy-xml
+# ui_prompted
 
 > Android UI 草图工具 / Android UI sketch tool
 > 快速绘制界面 → 输出可直接喂给 AI 的 Markdown。

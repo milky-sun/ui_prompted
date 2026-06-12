@@ -1,4 +1,4 @@
-# easy-xml — 项目记忆 / Project Memory
+# ui_prompted — 项目记忆 / Project Memory
 
 > 本文件是本项目的全部记忆载体（铁则：所有记忆只用 `~/ClaudeWork/ui_prompted` 文件夹，且全部纳入 git 管理）。
 > This file is the project's memory store (rule: all memory lives only in this folder, and is all under git version control).
@@ -31,7 +31,7 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 ## 设计决策 / Decisions
 - **形态**: 单页 `index.html`，无构建，浏览器直接打开。Single self-contained HTML, no build.
 - **渲染**: SVG。元素层 `#elLayer` / 备忘层 `#memoLayer`（可折叠）/ 选中层 `#overlay`。
-- **输出**: Markdown 容器 + XML 风结构（呼应项目名 easy-xml）+ Vibe Memos + Links。
+- **输出**: Markdown 容器 + XML 风结构 + Vibe Memos + Links。
 - **格式分工**: **JSON = 正本**（save/load/Import/Export，无损、`JSON.parse` 即可、最稳）；**Markdown = 面向 AI 的输出**（Code 视图仍可双向编辑，靠 `## 标题`+`home="true"` 解析，不依赖控制注释）。
 - **已删除控制注释**: `<!-- [PAGE:] -->`（解析器从不使用）、`<!-- [HOME:] -->`（与 `home="true"` 重复）。`target` 与入口改为**可读平文行**：`> Target: X` 和 `> Entry point (first screen shown on app launch): \`Name\``，解析器从这两行读取（兼容旧的 `[TARGET:]/[HOME:]`）。
 - **入口表达 entry point**: 入口页标题为 `## Name (entry point)`，screen 保留 `home="true"`，顶部平文句明确"启动时首屏"，避免被当成"首页 tab"。
@@ -53,7 +53,7 @@ A lightweight sketch tool for Android UI modeling: draw fast + add descriptions 
 - **页面菜单 page menu**: PAGES 的 `⋯` 改用非阻塞弹出菜单 `openPopmenu()`（Rename/Duplicate/Set as Home/Delete），不再用 `prompt/confirm`。Rename 为列表内联输入（`renamingPageId`）；Delete 直接删（有 Undo，提示 ⌘/Ctrl+Z）。Duplicate 见 `duplicatePage()`（深拷贝+重映射 id/groupId）。**命名用复制时刻短 hash** `Name (xxxx)`（base36 末4位），并去掉旧的 `(hash)` 避免叠加——解决"多次复制都叫 X copy"的重名（Markdown 链接按页名解析，需唯一名）。**今后避免用 alert/prompt/confirm 打断用户**，优先弹出菜单/内联编辑。
 - **右键菜单 context menu**: 画布右键元素 → `openPopmenu()`（Copy/Duplicate/Paste/置顶/置底/Delete），复用同一弹出菜单。
 - **性能 perf**: 拖拽重绘用 `scheduleCanvas()`（requestAnimationFrame 每帧合并一次）；`save()` 防抖 300ms（`saveNow()` 立即落盘，`beforeunload` flush）。**保持轻量，避免大改/卡顿**。
-- **界面偏好 prefs**: `snapGrid/zoom/zoomFit/memoVisible/折叠状态` 存 `PREFS_KEY="easy-xml-prefs-v1"`（与项目 JSON 分开），`savePrefs/loadPrefs`，启动时应用。
+- **界面偏好 prefs**: `snapGrid/zoom/zoomFit/memoVisible/折叠状态` 存 `PREFS_KEY="ui_prompted-prefs-v1"`（与项目 JSON 分开），`savePrefs/loadPrefs`，启动时应用。
 - **空画布提示**: 无元素无 memo 时画 "Drag an element here"（overlay 文本）。
 - **小窗适配 small viewport**: 工具栏可折叠（`body.tb-collapsed` → 隐藏 `#toolbar`，显示细条 `#tbMini`，含 ☰ 展开 + 视图切换）。工具栏点击监听挂在 `document` 上，使折叠后的细条按钮也生效。
 - **缩放 zoom**: `zoom` + `zoomFit`（默认自动适应）。`fitZoom()` 按 `#stage` 可用区域计算（上限 100%，不放大）。`applyZoom()` 只改 SVG width/height（viewBox 不变），故拖拽/落点的 `scale = rect.width/cw()` 自动跟随缩放，无需额外换算。右下角浮动 `#zoombar`：− / % 输入 / ＋ / 适应。`window resize` 时若 fit 则重算。
@@ -72,7 +72,7 @@ project = { pages:[ { id, name, isHome, canvasW, canvasH,
 - Markdown 顶部不再写"实现 Android UI"那两句套话（用户要求去掉）。
 - `groupId`：同值 = 同组（扁平标记，非嵌套）。
 - `textPos`：文本在框内的 9 宫格位置（tl/tc/tr/ml/mc/mr/bl/bc/br），见 `textXY()`/`TEXT_DEFAULT_POS`；rect/textfield/button 都渲染文本。双击元素可内联编辑文本（`editTextInline`）。导出属性 `textpos`。
-- localStorage key: `easy-xml-project-v1`
+- localStorage key: `ui_prompted-project-v1`（旧 `easy-xml-project-v1` 仍会被读取一次以迁移；prefs 同理）
 
 ## 待办 / TODO（候选）
 - [ ] 元素层级排序 z-order
