@@ -1,27 +1,35 @@
 # ui_prompted
 
-> Android UI 草图工具 / Android UI sketch tool
+> UI 草图工具（手机端 + 网页端）/ UI sketch tool (mobile + webpage)
 > 快速绘制界面 → 输出可直接喂给 AI 的 Markdown。
 > Sketch a UI fast → export Markdown you can paste straight into an AI prompt.
 
 ## 用法 / Usage
 
-直接在浏览器中打开 `index.html`。无需安装、无需构建。
-Just open `index.html` in a browser. No install, no build step.
+直接在浏览器中打开 `index.html`，选择设计类型。无需安装、无需构建。
+Just open `index.html` in a browser and pick a design mode. No install, no build step.
 
 ```
 open index.html
 ```
 
+- **📱 Mobile Design** (`mobile_design.html`) — 手机端界面（Android / iOS），Material 风通用控件。
+- **🖥️ Webpage Design** (`webpage_design.html`) — 网页端界面，HTML 基本元素词汇（heading/input/navbar/footer/table…），并支持**导入现有网站**。
+
+文件构成 / Files: 共享引擎 `sketcher.js` + `sketcher.css`，各页只带自己的配置（`APP_CONFIG`）；`html_import.js` 仅网页端加载。全部本地文件，零依赖、离线可用。
+Shared engine `sketcher.js` + `sketcher.css`; each page carries only its own `APP_CONFIG`. All local files, zero dependencies, works offline.
+
 ## 功能 / Features
+
+- **⇪ 导入现有网站 Import HTML（网页端 / webpage only）**: 选择 HTML+CSS 文件或整个文件夹，按真实布局**拍平**成可编辑的草图元素（脚本一律不执行、图片只留框）。页面里的 `<iframe>` 会拆成单独页面并用 🔗 链接占位框指向它。一次 ⌘/Ctrl+Z 可整体撤销。
+  Pick HTML+CSS files (or a folder) and flatten the real rendered layout into editable sketch elements (scripts never run; images become boxes). `<iframe>`s split into separate linked pages. One undo reverts the whole import.
 
 - **三种视图 Three views**: 🎨 设计 Visual / { } 代码 Code / ▶ 预览 Preview，工具栏一键切换。
   Switch between visual editing, an editable Markdown+XML code editor, and an interactive preview.
-- **绘制 Draw（通用控件 / generic, not Material-specific）**:
-  基础 Basic — Text / Frame / Image / Icon / Button / Textfield / Toggle / Divider；
-  组件 Components — Card / List / Top Bar / Bottom Bar / FAB / Include。
-  从工具栏拖拽到画布。Drag from the toolbar onto the canvas. 元素词汇中立，可用于 Android / iOS / Web / Desktop。
-- **🎯 目标平台 Target**: 选择 Android/iOS/Web/Desktop，作为提示写进导出的 Markdown（`<!-- [TARGET: …] -->`）。
+- **绘制 Draw**: 从工具栏拖拽到画布。Drag from the toolbar onto the canvas.
+  - 手机端 Mobile — Text / Frame / Image / Icon / Button / Textfield / Toggle / Divider / Card / List / Top Bar / Bottom Bar / FAB / Include
+  - 网页端 Webpage — Heading / Text / Link / Frame / Image / Icon / Divider / Button / Input / Textarea / Select / Checkbox / Radio / Navbar / Header / Footer / Sidebar / Section / Card / List / Table / Video / Include
+- **🎯 目标平台 Target**: 选择目标平台（手机端: Android/iOS/…；网页端: Web/PWA/…），作为提示写进导出的 Markdown（`> Target: …`）。
   Pick a target platform; it's written into the exported Markdown as a hint for the AI.
 - **样式 Style**: 颜色 + 透明度 / color + opacity.
 - **📝 元素注释 Element note**: 每个元素可写说明，导出为该元素上方的 XML 注释行（AI 易读）。
@@ -54,13 +62,16 @@ open index.html
 
 ## 输出格式 / Output format
 
-Markdown 容器 + XML 风的界面结构，配合注释标记：
-Markdown container + XML-flavored UI structure with comment markers:
+Markdown 容器 + XML 风的界面结构：
+Markdown container + XML-flavored UI structure:
 
 ```markdown
-<!-- [HOME: Home] -->
+# UI Design
 
-## Home (Home)
+> Target: Android
+> Entry point (first screen shown on app launch): `Home`
+
+## Home (entry point)
 
 ​```xml
 <screen name="Home" home="true" width="360" height="720">

@@ -25,11 +25,32 @@
   Records (CLAUDE.md / commits) describe THIS project only — never reference other projects, accounts, or paths.
 
 ## 目标 / Goal
-为 Android UI 建模做一个轻量草图工具：快速绘制 + 写描述 → 输出可直接喂给 AI 的 Markdown。
-A lightweight sketch tool for Android UI modeling: draw fast + add descriptions → output AI-ready Markdown.
+为 UI 建模做一个轻量草图工具（手机端 + 网页端）：快速绘制 + 写描述 → 输出可直接喂给 AI 的 Markdown。
+A lightweight sketch tool for UI modeling (mobile + webpage): draw fast + add descriptions → output AI-ready Markdown.
 
 ## 设计决策 / Decisions
-- **形态**: 单页 `index.html`，无构建，浏览器直接打开。Single self-contained HTML, no build.
+- **形态（2026-06-12 起）**: 无构建，浏览器直接打开；多页 + 共享引擎（仍零依赖、离线、本地文件引用，无 CDN）。
+  No build, open in browser; multi-page + shared engine (still zero-dep, offline, local file refs only, no CDN).
+  - `index.html` = 入口选择页（Mobile / Webpage 两卡片，自包含，不依赖共享文件）
+  - `mobile_design.html` = 原单页工具（手机端，git mv 自 index.html，功能不变）
+  - `webpage_design.html` = 网页端工具（HTML 元素词汇 + Import HTML）
+  - `sketcher.js` / `sketcher.css` = 共享引擎与样式；`html_import.js` = 网页导入（仅 webpage 页加载）
+  - **file:// 下不能用 ES modules**（CORS）→ 一律 classic `<script src>` + 全局作用域；script 标签保持在 body 末尾（引擎顶层直接查 DOM）。
+- **配置驱动 APP_CONFIG**: 每个 design 页在 sketcher.js **之前**内联定义 `window.APP_CONFIG`：
+  存储键（storeKey/prefsKey + legacy）、targets/defaultTarget、canvasPresets/defaultCanvas、
+  mdFilename/jsonFilename/notePlaceholder、palette（工具栏分组，由 `buildPalette()` 生成进 `#paletteGroups`）、
+  `types{}`（每类型：label/w/h/text/color?/textPos?/posPicker?/`draw(g,el)`/`place(el,W,H,x,y)?` 自动吸附）。
+  引擎合并为 `TYPES`（include 内置引擎：要访问 project 并递归 drawShapes）；未知类型画灰框 `? type` 兜底（跨页粘贴 md 不崩）。
+- **画布外框**: `#phone` 改为 `#frame` + `.frame-phone`（圆角手机壳）/ `.frame-browser`（浏览器窗，`::before` 三圆点）。JS 不引用该 id。
+- **存储分离**: mobile 用原键 `ui_prompted-project-v1`（兼容老数据）；web 用 `ui_prompted-web-project-v1` / `ui_prompted-web-prefs-v1`（legacy=null）。**file:// 的 localStorage 各页共享同一 origin，键不分离会互相覆盖**。
+- **Import HTML（webpage 页）**: `html_import.js` 把现有网站**拍平**成草图元素（与 flattenInclude 同思想：一次性转换、转完即普通元素）。
+  - **永远去脚本**（动态部分只取静态标记）；**图片只留框**（去掉 src，保留尺寸属性）；CSS 内联进文档用于布局测量（@import 一层）。
+  - 测量：隐藏 iframe（`sandbox="allow-same-origin"`，宽=目标画布宽 → 座标 1:1）+ **同步 `document.write`**。
+    **教训**：重复 srcdoc 导航的 onload 在 headless/后台不可靠；rAF 也可能不触发 → `nextFrame()` 带 setTimeout 兜底（`getBoundingClientRect` 本身强制同步回流，安全）。
+  - 映射：广度优先（截断保浅层），上限 300 元素、深度 12；表单控件/媒体/hr/table 为叶；nav/fixed-top→`navbar`、footer→`footer`（在文本叶规则**之前**判，否则纯内联链接的 nav 会被当成一行文本）；有底色/边框的文本叶 → rect+text（保框）；区块级容器发 groupKey（宿主重映射成真 groupId）。
+  - **iframe → 页面分离**：主页面放 rect 占位 + `linkTo` 指向子页 `<名>_iframe`（多个 `_iframe_2`…）；srcdoc / 选中文件内的 src 可解析则递归导入（仅一层，更深只留框）；外部 URL 留空页 + note。
+  - 宿主胶水 `applyHtmlImport()`（webpage 页内联）：一次 `snapshot()` → 建页（页名沿用短 hash 唯一化）→ 配真实 id → 按页名接 linkTo → toast 提示 ⌘Z 可撤销。
+- **渲染**: SVG。元素层 `#elLayer` / 备忘层 `#memoLayer`（可折叠）/ 选中层 `#overlay`。
 - **渲染**: SVG。元素层 `#elLayer` / 备忘层 `#memoLayer`（可折叠）/ 选中层 `#overlay`。
 - **输出**: Markdown 容器 + XML 风结构 + Vibe Memos + Links。
 - **格式分工**: **JSON = 正本**（save/load/Import/Export，无损、`JSON.parse` 即可、最稳）；**Markdown = 面向 AI 的输出**（Code 视图仍可双向编辑，靠 `## 标题`+`home="true"` 解析，不依赖控制注释）。
@@ -64,18 +85,22 @@ project = { pages:[ { id, name, isHome, canvasW, canvasH,
   elements:[ {id,type,x,y,w,h,text,textPos,note,color,opacity,linkTo,ref,groupId} ],
   memos:[ {id,x,y,w,h,text} ] } ], activePageId, seq }
 ```
-- 元素类型 element types（**通用命名**，非 Material 专有，适用于 Web/iOS/Desktop）:
-  `text` | `rect`(Frame) | `image` | `icon` | `button` | `textfield` | `toggle` | `divider` |
-  `card` | `list` | `topbar` | `bottombar` | `fab` | `include`（`ref`=被嵌入页面 id）
-- `project.target`：目标平台（Android/iOS/Web/Desktop/...），导出为 `<!-- [TARGET: …] -->`，仅作为给 AI 的上下文提示，元素词汇保持中立。
-- 结构性元素（topbar/bottombar/divider/fab）在 `addElement` 里自动吸附位置。`DEFAULTS[type].color` 可指定前景色（text/icon/fab 等）。
+- 元素类型 element types（按页配置，见各页 `APP_CONFIG.types`；include 引擎内置）:
+  - mobile: `text` | `rect`(Frame) | `image` | `icon` | `button` | `textfield` | `toggle` | `divider` |
+    `card` | `list` | `topbar` | `bottombar` | `fab` | `include`（`ref`=被嵌入页面 id）
+  - web（HTML 词汇）: `heading` | `text` | `link` | `rect` | `image` | `icon` | `divider` |
+    `button` | `input` | `textarea` | `select` | `checkbox` | `radio` |
+    `navbar` | `header` | `footer` | `sidebar` | `section` | `card` | `list` | `table` | `video` | `include`
+- `project.target`：目标平台（mobile: Android/iOS/...；web: Web/PWA/...），导出为 `> Target: X` 行，仅作为给 AI 的上下文提示。
+- 结构性元素经 `types[type].place()` 自动吸附（mobile: topbar/bottombar/divider/fab；web: navbar/footer/sidebar/divider）。`types[type].color` 可指定前景色（text/icon/fab 等）。
 - Markdown 顶部不再写"实现 Android UI"那两句套话（用户要求去掉）。
 - `groupId`：同值 = 同组（扁平标记，非嵌套）。
-- `textPos`：文本在框内的 9 宫格位置（tl/tc/tr/ml/mc/mr/bl/bc/br），见 `textXY()`/`TEXT_DEFAULT_POS`；rect/textfield/button 都渲染文本。双击元素可内联编辑文本（`editTextInline`）。导出属性 `textpos`。
-- localStorage key: `ui_prompted-project-v1`（旧 `easy-xml-project-v1` 仍会被读取一次以迁移；prefs 同理）
+- `textPos`：文本在框内的 9 宫格位置（tl/tc/tr/ml/mc/mr/bl/bc/br），见 `textXY()` 与 `types[type].textPos`；9 宫格选择器只对 `posPicker:true` 的类型显示。双击元素可内联编辑文本（`editTextInline`）。导出属性 `textpos`。
+- localStorage keys:
+  - mobile: `ui_prompted-project-v1` / `ui_prompted-prefs-v1`（旧 `easy-xml-*` 仍会被读取一次以迁移）
+  - web: `ui_prompted-web-project-v1` / `ui_prompted-web-prefs-v1`（无 legacy）
 
 ## 待办 / TODO（候选）
-- [ ] 元素层级排序 z-order
-- [ ] 撤销/重做 undo/redo
-- [ ] 更多控件（图片 / 开关 / 顶栏）more widgets
+- [ ] 入口页 index.html 完善（目前是简陋两卡片，用户预告后续会改）
+- [ ] Import HTML 实战调优（真实网站的映射规则阈值、警告面板化而非只进 console）
 - [ ] 直接输出可粘贴的项目快照（HTML 内嵌）
