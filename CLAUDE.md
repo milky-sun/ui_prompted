@@ -13,6 +13,9 @@
   - Remote（SSH 别名，确保用对私钥）：`origin = git@github_milky_sun:milky-sun/ui_prompted.git`
     → 浏览器 / browser: https://github.com/milky-sun/ui_prompted
     （`~/.ssh/config` 里 `Host github_milky_sun` → `IdentityFile ~/.ssh/github_milky_sun`；切勿改回素 `github.com`，否则会选错鍵。）
+  - 本仓库 `core.sshCommand = ssh -i ~/.ssh/github_milky_sun -o IdentitiesOnly=yes`（双保险固定私钥）。
+    **教训：不要加 `-F /dev/null`** —— 它会忽略 ~/.ssh/config，别名 `github_milky_sun` 就解析不了主机名，push 必败（曾踩坑 2026-06-12）。
+    Repo-local `core.sshCommand` pins the key as a second belt. **Never add `-F /dev/null`** — it skips ~/.ssh/config, the host alias stops resolving, and push fails.
 - 项目语言：代码注释可中英；但 **UI 显示一律英文（不出现中文）**。
   Project language: comments may be CN+EN, but **the UI is English-only** (decided 2026-05-30, supersedes the old "CN+EN UI" rule).
 
