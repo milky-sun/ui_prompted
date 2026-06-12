@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<!--
+  ui_prompted — 网页端 UI 草图工具 / Webpage UI sketch tool
+  无需构建，浏览器直接打开。配置在本页内联（APP_CONFIG），引擎在 sketcher.js。
+  No build step, open directly in a browser. Config is inline (APP_CONFIG); engine in sketcher.js.
+-->
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ui_prompted · Webpage UI Sketch</title>
+<link rel="stylesheet" href="sketcher.css">
+</head>
+<body class="mode-visual">
+
+<!-- always-visible collapse/expand toggle / 始终可见的折叠·展开按钮 -->
+<button class="tool" id="tbToggle" data-act="toggletb" title="Collapse / expand toolbar">▲</button>
+
+<!-- ======== Toolbar / 工具栏 ======== -->
+<div id="toolbar">
+  <div class="group">
+    <span class="group-label">Control</span>
+    <button class="tool" data-act="newpage">＋ New</button>
+    <button class="tool" data-act="import">Import</button>
+    <button class="tool" data-act="export">Export</button>
+    <button class="tool" data-act="clear" title="Clear everything (all pages)">🗑 Clear</button>
+  </div>
+
+  <div class="group">
+    <span class="group-label">View</span>
+    <button class="tool" data-act="view" data-mode="visual">🎨 Visual</button>
+    <button class="tool" data-act="view" data-mode="code">{ } Code</button>
+    <button class="tool" data-act="view" data-mode="preview">▶ Preview</button>
+  </div>
+
+  <!-- element palette, generated from APP_CONFIG.palette / 元素面板，由 APP_CONFIG.palette 生成 -->
+  <div id="paletteGroups" style="display:contents"></div>
+
+  <div class="group">
+    <span class="group-label">Style</span>
+    <input type="color" id="fillColor" value="#ffffff" title="Color">
+    <input type="range" id="opacity" min="0" max="1" step="0.05" value="1" title="Opacity">
+  </div>
+
+  <div class="group">
+    <span class="group-label">Canvas</span>
+    <select id="canvasPreset" title="Preset size"></select>
+    <input type="number" id="canvasW" class="num" min="120" max="4000" title="Width">
+    <span style="color:var(--muted)">×</span>
+    <input type="number" id="canvasH" class="num" min="120" max="4000" title="Height">
+    <button class="tool active" id="snapBtn" data-act="snap" title="Snap (grid + guides)">⊞ Snap</button>
+  </div>
+
+  <div class="group">
+    <span class="group-label">Annotate</span>
+    <div class="tool vibe draw" draggable="true" data-type="memo">💭 Vibe Memo</div>
+    <button class="tool" data-act="link">🔗 Link</button>
+    <button class="tool" id="toggleMemo" data-act="foldmemo">👁 Memos</button>
+  </div>
+</div>
+
+<!-- ======== Mini bar (collapsed) / 折叠后的细条 ======== -->
+<div id="tbMini">
+  <span class="group-label" style="margin-right:8px">COLLAPSED · click ▼ to expand</span>
+  <button class="tool" data-act="view" data-mode="visual">🎨 Visual</button>
+  <button class="tool" data-act="view" data-mode="code">{ } Code</button>
+  <button class="tool" data-act="view" data-mode="preview">▶ Preview</button>
+</div>
+
+<!-- ======== Main / 主区域 ======== -->
+<div id="main">
+  <!-- Page list / 页面列表 -->
+  <div id="pages">
+    <h3>Pages</h3>
+    <div id="pageList"></div>
+  </div>
+
+  <!-- Canvas / 画布 -->
+  <div id="stage">
+    <div id="frame" class="frame-browser">
+      <svg id="canvas" width="1280" height="800" viewBox="0 0 1280 800">
+        <g id="elLayer"></g>
+        <g id="memoLayer"></g>
+        <g id="overlay"></g>
+      </svg>
+    </div>
+    <!-- zoom control / 缩放控件 -->
+    <div id="zoombar">
+      <button class="tool" id="zOut" title="Zoom out">−</button>
+      <input type="text" id="zVal" title="Zoom %"><span class="pct">%</span>
+      <button class="tool" id="zIn" title="Zoom in">＋</button>
+      <button class="tool" id="zFit" title="Fit to window">Fit</button>
+    </div>
+  </div>
+
+  <!-- Code editor / 代码编辑器 -->
+  <div id="codeView">
+    <div class="code-toolbar">
+      <span>Markdown + XML (editable)</span>
+      <span class="spacer"></span>
+      <button class="tool primary" id="cApply">✓ Apply</button>
+      <button class="tool" id="cRegen">↻ Regenerate</button>
+      <button class="tool" id="cCopy">📋 Copy</button>
+      <button class="tool" id="cDownload">⬇ Download .md</button>
+    </div>
+    <div class="code-wrap">
+      <pre id="codeHl" aria-hidden="true"><code></code></pre>
+      <textarea id="codeArea" spellcheck="false"></textarea>
+    </div>
+  </div>
+
+  <!-- Properties / 属性面板 -->
+  <div id="props">
+    <h3>Properties</h3>
+    <div id="propBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+
+<script>
+"use strict";
+// ====================================================================
+// Webpage config / 网页端配置 — read by sketcher.js (load order matters)
+// Element vocabulary follows basic HTML elements / 元素词汇贴合 HTML 基本元素
+// ====================================================================
+window.APP_CONFIG = {
+  storeKey: "ui_prompted-web-project-v1",
+  storeKeyLegacy: null,
+  prefsKey: "ui_prompted-web-prefs-v1",
+  prefsKeyLegacy: null,
+  targets: ["Web", "Web (responsive)", "Web (desktop-first)", "PWA"],
+  defaultTarget: "Web",
+  defaultCanvas: { w: 1280, h: 800 },
+  canvasPresets: [
+    { label: "Web 1280×800",      w: 1280, h: 800 },
+    { label: "Laptop 1366×768",   w: 1366, h: 768 },
+    { label: "Desktop 1440×900",  w: 1440, h: 900 },
+    { label: "Full HD 1920×1080", w: 1920, h: 1080 },
+    { label: "Tablet 768×1024",   w: 768,  h: 1024 },
+    { label: "Mobile 390×844",    w: 390,  h: 844 },
+  ],
+  mdFilename: "web-ui.md",
+  jsonFilename: "ui_prompted-web-project.json",
+  notePlaceholder: "e.g. primary CTA, submits the signup form on click…",
+  palette: [
+    { label: "Basic",  types: ["heading", "text", "link", "rect", "image", "icon", "divider"] },
+    { label: "Form",   types: ["button", "input", "textarea", "select", "checkbox", "radio"] },
+    { label: "Layout", types: ["navbar", "header", "footer", "sidebar", "section", "card", "list", "table", "video", "include"] },
+  ],
+  types: {
+    heading: {
+      label: "H Heading", w: 320, h: 40, text: "Heading", color: "#1d2330", textPos: "ml",
+      draw(g, el) {
+        const s = Math.min(Math.max(el.h * 0.7, 16), 34), p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Heading", el.color || "#1d2330", s, p.anchor, 700);
+      },
+    },
+    text: {
+      label: "T Text", w: 280, h: 24, text: "Paragraph text", color: "#1d2330", textPos: "ml",
+      draw(g, el) {
+        const s = Math.min(Math.max(el.h * 0.7, 12), 28), p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Text", el.color || "#1d2330", s, p.anchor);
+      },
+    },
+    link: {
+      label: "🔗 Link", w: 120, h: 22, text: "Link", color: "#2563eb", textPos: "ml",
+      draw(g, el) {
+        const s = Math.min(Math.max(el.h * 0.7, 12), 24), p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Link", el.color || "#2563eb", s, p.anchor);
+        const tw = (el.text || "Link").length * s * 0.55;   // approx underline width / 近似下划线宽
+        line(g, p.x, p.y + 3, p.x + Math.min(tw, el.w - 10), p.y + 3, el.color || "#2563eb");
+      },
+    },
+    rect: {
+      label: "▭ Frame", w: 280, h: 160, text: "", textPos: "tl", posPicker: true,
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 6);
+        if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor); }
+      },
+    },
+    image: {
+      label: "🖼 Image", w: 240, h: 160, text: "", color: "#eef0f3",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color || "#eef0f3", op, "#c4c9d2", 6);
+        line(g, 0, 0, el.w, el.h, "#c4c9d2"); line(g, el.w, 0, 0, el.h, "#c4c9d2");
+        label(g, el.w / 2, el.h / 2 + 6, el.text || "🖼", "#8a8f99", 16, "middle");
+      },
+    },
+    icon: {
+      label: "★ Icon", w: 40, h: 40, text: "★", color: "#1d2330",
+      draw(g, el) {
+        const s = Math.min(el.w, el.h) * 0.82;
+        label(g, el.w / 2, el.h / 2 + s * 0.35, el.text || "★", el.color || "#1d2330", s, "middle");
+      },
+    },
+    divider: {
+      label: "— Divider", w: 320, h: 2, text: "", color: "#d0d0d0",
+      place(el, W, H, x, y) { el.w = Math.min(W, 320); el.x = clamp(x - el.w / 2, 0, W - el.w); },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, Math.max(1, el.h), el.color || "#d0d0d0", op, "none", 0);
+      },
+    },
+    button: {
+      label: "▢ Button", w: 140, h: 40, text: "Button", textPos: "mc", posPicker: true,
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 6);
+        const s = 15, p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Button", "#1d2330", s, p.anchor, 600);
+      },
+    },
+    input: {
+      label: "▭ Input", w: 260, h: 38, text: "Input...", textPos: "ml", posPicker: true,
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 4);
+        const s = 14, p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Input...", el.text ? "#444" : "#8a8f99", s, p.anchor);
+      },
+    },
+    textarea: {
+      label: "▤ Textarea", w: 320, h: 100, text: "Text...", textPos: "tl",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 4);
+        const s = 14, p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Text...", el.text ? "#444" : "#8a8f99", s, p.anchor);
+        // resize grip at bottom-right / 右下角拖拽纹
+        line(g, el.w - 10, el.h - 3, el.w - 3, el.h - 10, "#9aa0ad");
+        line(g, el.w - 6, el.h - 3, el.w - 3, el.h - 6, "#9aa0ad");
+      },
+    },
+    select: {
+      label: "▾ Select", w: 200, h: 38, text: "Option", textPos: "ml",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 4);
+        const s = 14, p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Option", "#444", s, p.anchor);
+        label(g, el.w - 12, el.h / 2 + 5, "▾", "#8a8f99", 14, "end");
+      },
+    },
+    checkbox: {
+      label: "☑ Checkbox", w: 160, h: 24, text: "Checkbox",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        const cy = el.h / 2;
+        rect(g, 0, cy - 8, 16, 16, "#ffffff", op, "#3a3d47", 3);
+        label(g, 8, cy + 5, "✓", "#2563eb", 13, "middle", 700);
+        label(g, 24, cy + 5, el.text || "Checkbox", "#1d2330", 14, "start");
+      },
+    },
+    radio: {
+      label: "◉ Radio", w: 160, h: 24, text: "Radio",
+      draw(g, el) {
+        const cy = el.h / 2;
+        circle(g, 8, cy, 8, "#ffffff", "#3a3d47");
+        circle(g, 8, cy, 4, "#2563eb", "none");
+        label(g, 24, cy + 5, el.text || "Radio", "#1d2330", 14, "start");
+      },
+    },
+    navbar: {
+      label: "▔ Navbar", w: 1280, h: 64, text: "Home,Products,About,Contact",
+      place(el, W, H) { el.w = W; el.x = 0; el.y = 0; },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 0);
+        label(g, 20, el.h / 2 + 5, "◼ Logo", "#1d2330", 16, "start", 700);
+        const items = (el.text || "Menu").split(",").map(s => s.trim()).filter(Boolean);
+        const n = Math.max(1, items.length);
+        items.forEach((it, i) => {
+          const cx = el.w * 0.45 + (i + 0.5) * (el.w * 0.52 / n);
+          label(g, cx, el.h / 2 + 5, it, "#4a4f59", 14, "middle");
+        });
+      },
+    },
+    header: {
+      label: "▆ Header / Hero", w: 1280, h: 240, text: "Hero headline",
+      place(el, W, H) { el.w = W; el.x = 0; },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#eef2f8" : el.color, op, "none", 0);
+        label(g, el.w / 2, el.h / 2, el.text || "Hero headline", "#1d2330", 28, "middle", 700);
+        label(g, el.w / 2, el.h / 2 + 26, "Sub copy goes here", "#8a8f99", 14, "middle");
+      },
+    },
+    footer: {
+      label: "▁ Footer", w: 1280, h: 120, text: "© 2026 Company",
+      place(el, W, H) { el.w = W; el.x = 0; el.y = H - el.h; },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#2b2f3a" : el.color, op, "none", 0);
+        label(g, el.w / 2, el.h / 2 + 5, el.text || "© 2026 Company", "#c4c9d2", 13, "middle");
+      },
+    },
+    sidebar: {
+      label: "▎Sidebar", w: 240, h: 800, text: "Menu 1,Menu 2,Menu 3",
+      place(el, W, H) { el.h = H; el.x = 0; el.y = 0; },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#f5f6f8" : el.color, op, "#e2e5ea", 0);
+        const items = (el.text || "Menu").split(",").map(s => s.trim()).filter(Boolean);
+        items.forEach((it, i) => {
+          const ly = 24 + i * 40;
+          if (ly > el.h - 12) return;
+          label(g, 16, ly + 5, it, "#4a4f59", 14, "start");
+          line(g, 8, ly + 20, el.w - 8, ly + 20, "#e3e3e3");
+        });
+      },
+    },
+    section: {
+      label: "▭ Section", w: 960, h: 300, text: "Section", textPos: "tl", posPicker: true,
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#fdfdfd" : el.color, op, "#c4c9d2", 4);
+        if (el.text) { const s = 13, p = textXY(el, s); label(g, p.x, p.y, el.text, "#8a8f99", s, p.anchor, 600); }
+      },
+    },
+    card: {
+      label: "▢ Card", w: 280, h: 200, text: "", textPos: "tl",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 2, 3, el.w, el.h, "#00000018", op, "none", 10);   // soft shadow / 阴影
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 10);
+        if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor, 600); }
+      },
+    },
+    list: {
+      label: "☰ List", w: 300, h: 220, text: "Item",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 6);
+        const rows = Math.max(2, Math.floor(el.h / 44));
+        for (let i = 1; i < rows; i++) { const ly = i * (el.h / rows); line(g, 0, ly, el.w, ly, "#e3e3e3"); }
+        for (let i = 0; i < rows; i++) {
+          const ly = i * (el.h / rows) + (el.h / rows) / 2 + 4;
+          label(g, 14, ly, (el.text || "Item") + " " + (i + 1), "#4a4f59", 13, "start");
+        }
+      },
+    },
+    table: {
+      label: "⊞ Table", w: 480, h: 220, text: "Col A,Col B,Col C",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 4);
+        const headH = 32;
+        rect(g, 0, 0, el.w, headH, "#f0f2f5", op, "#3a3d47", 4);
+        const cols = (el.text || "Col").split(",").map(s => s.trim()).filter(Boolean);
+        const n = Math.max(1, cols.length);
+        cols.forEach((c, i) => {
+          const cx = (i + 0.5) * (el.w / n);
+          label(g, cx, headH / 2 + 5, c, "#1d2330", 13, "middle", 600);
+        });
+        for (let i = 1; i < n; i++) line(g, i * (el.w / n), 0, i * (el.w / n), el.h, "#e3e3e3");
+        const rows = Math.max(1, Math.floor((el.h - headH) / 36));
+        for (let i = 1; i <= rows; i++) {
+          const ly = headH + i * ((el.h - headH) / rows);
+          if (ly < el.h - 2) line(g, 0, ly, el.w, ly, "#e3e3e3");
+        }
+      },
+    },
+    video: {
+      label: "▶ Video", w: 320, h: 180, text: "",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#2b2f3a" : el.color, op, "none", 6);
+        circle(g, el.w / 2, el.h / 2, Math.min(el.w, el.h) * 0.16, "#ffffff", "none");
+        label(g, el.w / 2 + 2, el.h / 2 + 6, "▶", "#2b2f3a", Math.min(el.w, el.h) * 0.18, "middle");
+      },
+    },
+  },
+};
+</script>
+<script src="sketcher.js"></script>
+</body>
+</html>

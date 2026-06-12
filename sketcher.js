@@ -583,7 +583,7 @@ function renderProps() {
   }
 
   html += `<div class="field"><label>📝 Note (description for AI)</label>` +
-    `<textarea id="pNote" placeholder="e.g. main login button, validates email on tap…">${escapeHtml(obj.note || "")}</textarea></div>` +
+    `<textarea id="pNote" placeholder="${CFG.notePlaceholder || "e.g. main login button, validates email on tap…"}">${escapeHtml(obj.note || "")}</textarea></div>` +
     `<div class="field row">` +
     `<div><label>W</label><input type="text" id="pW" value="${Math.round(obj.w)}"></div>` +
     `<div><label>H</label><input type="text" id="pH" value="${Math.round(obj.h)}"></div>` +
