@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<!--
+  ui_prompted — 入口页 / Entry page
+  选择设计类型：手机端 / 网页端。Pick a design mode: mobile or webpage.
+  自包含（不依赖 sketcher.css/js）。Self-contained (no sketcher.css/js dependency).
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ui_prompted</title>
+<style>
+  :root {
+    --bg: #1e1f24;
+    --panel: #26282f;
+    --panel-2: #2e3038;
+    --border: #3a3d47;
+    --text: #e6e7ea;
+    --muted: #9aa0ad;
+    --accent: #5b9dff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    padding: 24px;
+  }
+  h1 { margin: 0; font-size: 28px; letter-spacing: .5px; }
+  .sub { margin: 0; color: var(--muted); font-size: 14px; }
+  .cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+  .card {
+    display: flex; flex-direction: column; gap: 8px;
+    width: 240px; padding: 26px 22px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    color: var(--text);
+    text-decoration: none;
+    transition: border-color .15s, background .15s, transform .15s;
+  }
+  .card:hover {
+    border-color: var(--accent);
+    background: var(--panel-2);
+    transform: translateY(-2px);
+  }
+  .card .emoji { font-size: 30px; }
+  .card b { font-size: 17px; }
+  .card span { color: var(--muted); font-size: 13px; line-height: 1.4; }
+</style>
+</head>
+<body>
+  <h1>ui_prompted</h1>
+  <p class="sub">Sketch a UI, get an AI-ready prompt.</p>
+  <div class="cards">
+    <a class="card" href="mobile_design.html">
+      <span class="emoji">📱</span>
+      <b>Mobile Design</b>
+      <span>Sketch app screens for Android / iOS</span>
+    </a>
+    <a class="card" href="webpage_design.html">
+      <span class="emoji">🖥️</span>
+      <b>Webpage Design</b>
+      <span>Sketch web pages and layouts — or import an existing site</span>
+    </a>
+  </div>
+</body>
+</html>
