@@ -1,41 +1,26 @@
 "use strict";
 // ====================================================================
-// ui_prompted — state & logic / 状态与逻辑
+// ui_prompted — shared sketch engine / 共享草图引擎
+// Page-specific config (element types, presets, storage keys) comes from
+// window.APP_CONFIG, defined inline by each host page BEFORE this script.
+// 页面相关配置（元素类型、预设、存储键）由各宿主页在本脚本之前内联定义。
 // ====================================================================
-const STORE_KEY = "ui_prompted-project-v1";
-const STORE_KEY_LEGACY = "easy-xml-project-v1";  // pre-rename key; read once for migration
+const CFG = window.APP_CONFIG;
+const STORE_KEY = CFG.storeKey;
+const STORE_KEY_LEGACY = CFG.storeKeyLegacy;  // pre-rename key; read once for migration (may be null)
 
-// Default element sizes / 默认尺寸 (color optional: foreground for text-like)
-const DEFAULTS = {
-  rect:      { w: 200, h: 130, text: "" },
-  text:      { w: 160, h: 28,  text: "Text", color: "#1d2330" },
-  textfield: { w: 240, h: 46,  text: "Input..." },
-  button:    { w: 140, h: 46,  text: "Button" },
-  list:      { w: 260, h: 220, text: "Item" },
-  image:     { w: 200, h: 140, text: "", color: "#eef0f3" },
-  icon:      { w: 44,  h: 44,  text: "★", color: "#1d2330" },
-  card:      { w: 240, h: 160, text: "" },
-  topbar:    { w: 360, h: 56,  text: "Title" },
-  bottombar: { w: 360, h: 60,  text: "Home,Search,Profile" },
-  fab:       { w: 56,  h: 56,  text: "＋", color: "#5b9dff" },
-  toggle:    { w: 52,  h: 30,  text: "", color: "#5b9dff" },
-  divider:   { w: 240, h: 2,   text: "", color: "#d0d0d0" },
-  include:   { w: 170, h: 130, text: "" },
-};
+// Element type registry / 元素类型注册表
+// include is engine-built-in: it needs project access and drawShapes recursion.
+// include 是引擎内置类型：需要访问 project 并递归 drawShapes。
+const TYPES = Object.assign({
+  include: { label: "📦 Include", title: "Embed another page as an element", w: 170, h: 130, text: "" },
+}, CFG.types);
 
 // Canvas presets / 画面预设
-const CANVAS_PRESETS = [
-  { label: "Phone 360×720",    w: 360,  h: 720 },
-  { label: "Phone 360×800",    w: 360,  h: 800 },
-  { label: "Phone L 412×915",  w: 412,  h: 915 },
-  { label: "Compact 320×568",  w: 320,  h: 568 },
-  { label: "Tablet 800×1280",  w: 800,  h: 1280 },
-  { label: "Web 1280×800",     w: 1280, h: 800 },
-  { label: "Desktop 1440×900", w: 1440, h: 900 },
-];
+const CANVAS_PRESETS = CFG.canvasPresets;
 
 // target platforms (hint passed to AI) / 目标平台（提示给 AI）
-const TARGETS = ["Android", "iOS", "Web", "Desktop", "Mobile (generic)"];
+const TARGETS = CFG.targets;
 
 let project = null;        // { pages, activePageId, seq }
 let selection = { kind: "el", ids: [] };   // multi-select / 复数选择
@@ -72,8 +57,8 @@ function nextId(prefix) {
 }
 
 // ---- Persistence / 持久化 (localStorage) ----
-const PREFS_KEY = "ui_prompted-prefs-v1";
-const PREFS_KEY_LEGACY = "easy-xml-prefs-v1";  // pre-rename key; read once for migration
+const PREFS_KEY = CFG.prefsKey;
+const PREFS_KEY_LEGACY = CFG.prefsKeyLegacy;  // pre-rename key; read once for migration (may be null)
 let saveTimer = null;
 function save() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300); }  // debounced
 function saveNow() {
@@ -83,7 +68,8 @@ function saveNow() {
 }
 function load() {
   try {
-    const raw = localStorage.getItem(STORE_KEY) || localStorage.getItem(STORE_KEY_LEGACY);
+    let raw = localStorage.getItem(STORE_KEY);
+    if (!raw && STORE_KEY_LEGACY) raw = localStorage.getItem(STORE_KEY_LEGACY);
     if (raw) { project = JSON.parse(raw); return true; }
   } catch (e) { console.warn("load failed", e); }
   return false;
@@ -99,7 +85,7 @@ function savePrefs() {
 }
 function loadPrefs() {
   try {
-    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || localStorage.getItem(PREFS_KEY_LEGACY) || "{}");
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || (PREFS_KEY_LEGACY && localStorage.getItem(PREFS_KEY_LEGACY)) || "{}");
     if (typeof p.snapGrid === "boolean") snapGrid = p.snapGrid;
     if (typeof p.memoVisible === "boolean") memoVisible = p.memoVisible;
     if (typeof p.zoomFit === "boolean") zoomFit = p.zoomFit;
@@ -139,8 +125,8 @@ function activePage() {
   return project.pages.find(p => p.id === project.activePageId) || project.pages[0];
 }
 // active canvas size / 当前画面尺寸
-function cw() { const p = activePage(); return (p && p.canvasW) || 360; }
-function ch() { const p = activePage(); return (p && p.canvasH) || 720; }
+function cw() { const p = activePage(); return (p && p.canvasW) || CFG.defaultCanvas.w; }
+function ch() { const p = activePage(); return (p && p.canvasH) || CFG.defaultCanvas.h; }
 
 // ---- Init / 初始化 ----
 function freshProject() {
@@ -154,7 +140,7 @@ function createPage(name) {
     id: nextId("p"),
     name: name || ("Page " + (project.pages.length + 1)),
     isHome: false, elements: [], memos: [],
-    canvasW: 360, canvasH: 720,
+    canvasW: CFG.defaultCanvas.w, canvasH: CFG.defaultCanvas.h,
   };
   project.pages.push(p);
   return p;
@@ -162,10 +148,10 @@ function createPage(name) {
 // fill defaults for old data / 兼容旧数据
 function migrate() {
   if (!project.pages) return;
-  if (!project.target) project.target = "Android";
+  if (!project.target) project.target = CFG.defaultTarget;
   project.pages.forEach(p => {
-    if (!p.canvasW) p.canvasW = 360;
-    if (!p.canvasH) p.canvasH = 720;
+    if (!p.canvasW) p.canvasW = CFG.defaultCanvas.w;
+    if (!p.canvasH) p.canvasH = CFG.defaultCanvas.h;
     if (!p.memos) p.memos = [];
     (p.elements || []).forEach(e => { if (e.note == null) e.note = ""; if (e.ref === undefined) e.ref = null; if (e.groupId === undefined) e.groupId = null; if (e.textPos === undefined) e.textPos = null; });
   });
@@ -383,12 +369,11 @@ function buildElement(el) {
   return g;
 }
 
-// default text position per type / 各类型默认文本位置
-const TEXT_DEFAULT_POS = { rect: "tl", text: "ml", textfield: "ml", button: "mc", card: "tl" };
 // resolve {x, y, anchor} for an element's text given its 9-anchor position
-// 依据 9 宫格位置算出文本的 {x, y, anchor}
+// (default position per type comes from TYPES[type].textPos)
+// 依据 9 宫格位置算出文本的 {x, y, anchor}（各类型默认位置取自 TYPES[type].textPos）
 function textXY(el, size) {
-  const pos = el.textPos || TEXT_DEFAULT_POS[el.type] || "mc";
+  const pos = el.textPos || (TYPES[el.type] || {}).textPos || "mc";
   const row = pos[0], col = pos[1], pad = 10;
   let x, anchor;
   if (col === "l") { x = pad; anchor = "start"; }
@@ -402,82 +387,25 @@ function textXY(el, size) {
 }
 
 // draw the shapes for an element into a group (local coords, no events)
-// 把元素的形状画进一个分组（局部坐标，无事件）。depth 用于限制 include 递归。
+// Per-type drawing lives in TYPES[type].draw (from APP_CONFIG); include stays
+// engine-built-in because it reads project and recurses.
+// 把元素的形状画进一个分组（局部坐标，无事件）。各类型绘制在 TYPES[type].draw；
+// include 内置于引擎（需访问 project 并递归）。depth 用于限制 include 递归。
 function drawShapes(g, el, depth) {
-  const stroke = "#3a3d47";
-  const op = el.opacity != null ? el.opacity : 1;
-
-  if (el.type === "rect") {
-    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
-    if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor); }
-  } else if (el.type === "textfield") {
-    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 6);
-    const s = 14, p = textXY(el, s);
-    label(g, p.x, p.y, el.text || "Input...", el.text ? "#444" : "#8a8f99", s, p.anchor);
-  } else if (el.type === "button") {
-    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 22);
-    const s = 15, p = textXY(el, s);
-    label(g, p.x, p.y, el.text || "Button", "#1d2330", s, p.anchor, 600);
-  } else if (el.type === "list") {
-    rect(g, 0, 0, el.w, el.h, el.color, op, stroke, 8);
-    const rows = Math.max(2, Math.floor(el.h / 44));
-    for (let i = 1; i < rows; i++) { const ly = i * (el.h / rows); line(g, 0, ly, el.w, ly, "#e3e3e3"); }
-    for (let i = 0; i < rows; i++) {
-      const ly = i * (el.h / rows) + (el.h / rows) / 2 + 4;
-      label(g, 14, ly, (el.text || "Item") + " " + (i + 1), "#4a4f59", 13, "start");
-    }
-  } else if (el.type === "text") {
-    // plain text label, no box / 纯文本，无边框
-    const s = Math.min(Math.max(el.h * 0.7, 12), 28), p = textXY(el, s);
-    label(g, p.x, p.y, el.text || "Text", el.color || "#1d2330", s, p.anchor);
-  } else if (el.type === "image") {
-    rect(g, 0, 0, el.w, el.h, el.color || "#eef0f3", op, "#c4c9d2", 8);
-    line(g, 0, 0, el.w, el.h, "#c4c9d2"); line(g, el.w, 0, 0, el.h, "#c4c9d2");
-    label(g, el.w / 2, el.h / 2 + 6, el.text || "🖼", "#8a8f99", 16, "middle");
-  } else if (el.type === "icon") {
-    const s = Math.min(el.w, el.h) * 0.82;
-    label(g, el.w / 2, el.h / 2 + s * 0.35, el.text || "★", el.color || "#1d2330", s, "middle");
-  } else if (el.type === "card") {
-    rect(g, 2, 3, el.w, el.h, "#00000018", op, "none", 12);   // soft shadow / 阴影
-    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 12);
-    if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor, 600); }
-  } else if (el.type === "topbar") {
-    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#5b9dff" : el.color, op, "none", 0);
-    label(g, 16, el.h / 2 + 6, "≡", "#fff", 20, "start");
-    label(g, 46, el.h / 2 + 5, el.text || "Title", "#fff", 16, "start", 600);
-    label(g, el.w - 16, el.h / 2 + 6, "⋮", "#fff", 20, "end");
-  } else if (el.type === "bottombar") {
-    rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 0);
-    const items = (el.text || "Tab").split(",").map(s => s.trim()).filter(Boolean);
-    const n = Math.max(1, items.length);
-    items.forEach((it, i) => {
-      const cx = (i + 0.5) * (el.w / n);
-      circle(g, cx, el.h * 0.32, 8, i === 0 ? "#5b9dff" : "#b9bfca", "none");
-      label(g, cx, el.h * 0.78, it, i === 0 ? "#5b9dff" : "#8a8f99", 11, "middle");
-    });
-  } else if (el.type === "fab") {
-    const rr = Math.min(el.w, el.h) / 2;
-    circle(g, el.w / 2, el.h / 2, rr, el.color || "#5b9dff", "none");
-    label(g, el.w / 2, el.h / 2 + 8, el.text || "＋", "#fff", rr, "middle", 600);
-  } else if (el.type === "toggle") {
-    const rr = el.h / 2;
-    rect(g, 0, 0, el.w, el.h, el.color || "#5b9dff", op, "none", rr);   // "on" track
-    circle(g, el.w - rr, rr, rr - 3, "#fff", "none");                   // knob right
-  } else if (el.type === "divider") {
-    rect(g, 0, 0, el.w, Math.max(1, el.h), el.color || "#d0d0d0", op, "none", 0);
-  } else if (el.type === "include") {
+  if (el.type === "include") {
+    const op = el.opacity != null ? el.opacity : 1;
     rect(g, 0, 0, el.w, el.h, "#eef2ff", op, "#5b9dff", 8);
     const ref = el.ref ? project.pages.find(p => p.id === el.ref) : null;
     label(g, 6, 14, "📦 " + (ref ? ref.name : "(no page)"), "#3a6dd0", 11, "start", 600);
     if (ref && depth < 1) {
       // scaled snapshot of the referenced page / 引用页面的缩放快照
       const pad = 4, top = 18;
-      const sc = Math.min((el.w - pad * 2) / (ref.canvasW || 360), (el.h - top - pad) / (ref.canvasH || 720));
+      const sc = Math.min((el.w - pad * 2) / (ref.canvasW || CFG.defaultCanvas.w), (el.h - top - pad) / (ref.canvasH || CFG.defaultCanvas.h));
       const inner = document.createElementNS(SVGNS, "g");
       inner.setAttribute("transform", `translate(${pad},${top}) scale(${sc})`);
       inner.setAttribute("pointer-events", "none");
       const bg = document.createElementNS(SVGNS, "rect");
-      bg.setAttribute("width", ref.canvasW || 360); bg.setAttribute("height", ref.canvasH || 720);
+      bg.setAttribute("width", ref.canvasW || CFG.defaultCanvas.w); bg.setAttribute("height", ref.canvasH || CFG.defaultCanvas.h);
       bg.setAttribute("fill", "#fafafa"); inner.appendChild(bg);
       (ref.elements || []).forEach(ce => {
         const cg = document.createElementNS(SVGNS, "g");
@@ -489,6 +417,16 @@ function drawShapes(g, el, depth) {
     } else if (ref) {
       label(g, el.w / 2, el.h / 2 + 10, "(nested)", "#9aa0ad", 10, "middle");
     }
+    return;
+  }
+  const t = TYPES[el.type];
+  if (t && t.draw) {
+    t.draw(g, el);
+  } else {
+    // unknown type (e.g. md from another platform pasted into Code view) / 未知类型兜底
+    const op = el.opacity != null ? el.opacity : 1;
+    rect(g, 0, 0, el.w, el.h, "#f0f0f0", op, "#c4c9d2", 4);
+    label(g, 6, 16, "? " + el.type, "#8a8f99", 11, "start");
   }
 }
 
@@ -632,8 +570,8 @@ function renderProps() {
       `<button class="tool" id="pFlatten" style="width:100%;margin-bottom:12px">🧩 Flatten to elements</button>`;
   } else {
     html += `<div class="field"><label>Text (double-click element to edit)</label><input type="text" id="pText" value="${escapeHtml(obj.text || "")}"></div>`;
-    if (["rect", "textfield", "button"].includes(obj.type)) {
-      const cur = obj.textPos || TEXT_DEFAULT_POS[obj.type];
+    if ((TYPES[obj.type] || {}).posPicker) {
+      const cur = obj.textPos || TYPES[obj.type].textPos || "mc";
       const TPOS = ["tl","tc","tr","ml","mc","mr","bl","bc","br"];
       const GLYPH = { tl:"↖", tc:"↑", tr:"↗", ml:"←", mc:"•", mr:"→", bl:"↙", bc:"↓", br:"↘" };
       html += `<div class="field"><label>Text position</label><div class="pos-grid">` +
@@ -891,7 +829,7 @@ function flattenInclude(el) {
         const rp = e.ref && project.pages.find(p => p.id === e.ref);
         if (rp && !visited.has(rp.id)) {
           visited.add(rp.id);
-          const isc = sc * Math.min(e.w / (rp.canvasW || 360), e.h / (rp.canvasH || 720));
+          const isc = sc * Math.min(e.w / (rp.canvasW || CFG.defaultCanvas.w), e.h / (rp.canvasH || CFG.defaultCanvas.h));
           bake(rp, ox + e.x * sc, oy + e.y * sc, isc, depth + 1);
           visited.delete(rp.id);
         }
@@ -906,7 +844,7 @@ function flattenInclude(el) {
       });
     });
   }
-  const sc = Math.min(el.w / (ref.canvasW || 360), el.h / (ref.canvasH || 720));
+  const sc = Math.min(el.w / (ref.canvasW || CFG.defaultCanvas.w), el.h / (ref.canvasH || CFG.defaultCanvas.h));
   visited.add(ref.id);
   bake(ref, el.x, el.y, sc, 0);
   const page = activePage();
@@ -928,6 +866,31 @@ function applyCanvasSize(w, h) {
 // ====================================================================
 // Interaction: drag from toolbar / 从工具栏拖拽
 // ====================================================================
+// build the element palette from CFG.palette into #paletteGroups
+// (must run BEFORE the dragstart registration below) / 先生成再注册 dragstart
+function buildPalette() {
+  const host = $("#paletteGroups");
+  if (!host) return;
+  CFG.palette.forEach(grp => {
+    const div = document.createElement("div");
+    div.className = "group";
+    const lab = document.createElement("span");
+    lab.className = "group-label"; lab.textContent = grp.label;
+    div.appendChild(lab);
+    grp.types.forEach(type => {
+      const t = TYPES[type];
+      if (!t) return;
+      const b = document.createElement("div");
+      b.className = "tool draw"; b.draggable = true;
+      b.dataset.type = type;
+      b.textContent = t.label || type;
+      if (t.title) b.title = t.title;
+      div.appendChild(b);
+    });
+    host.appendChild(div);
+  });
+}
+buildPalette();
 document.querySelectorAll(".tool.draw").forEach(t => {
   t.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/plain", t.dataset.type));
 });
@@ -943,22 +906,21 @@ canvas.addEventListener("drop", (e) => {
 });
 
 function addElement(type, x, y) {
-  const d = DEFAULTS[type];
+  const d = TYPES[type];
   if (!d) return;
   snapshot();
-  let w = d.w, h = d.h, ex = clamp(x - w / 2, 0, cw() - w), ey = clamp(y - h / 2, 0, ch() - h);
-  // structural elements snap into place / 结构性元素自动吸附
-  if (type === "topbar")      { w = cw(); ex = 0; ey = 0; }
-  else if (type === "bottombar") { w = cw(); ex = 0; ey = ch() - h; }
-  else if (type === "divider")   { w = Math.min(cw(), 240); ex = clamp(x - w / 2, 0, cw() - w); }
-  else if (type === "fab")    { ex = clamp(cw() - w - 16, 0, cw() - w); ey = clamp(ch() - h - 16, 0, ch() - h); }
   const el = {
-    id: nextId("e"), type, x: ex, y: ey, w, h,
+    id: nextId("e"), type,
+    x: clamp(x - d.w / 2, 0, cw() - d.w), y: clamp(y - d.h / 2, 0, ch() - d.h),
+    w: d.w, h: d.h,
     text: d.text, note: "", textPos: null,
     color: d.color || $("#fillColor").value,
     opacity: parseFloat($("#opacity").value),
     linkTo: null, ref: null, groupId: null,
   };
+  // structural elements snap into place via the type's place() hook
+  // 结构性元素通过类型的 place() 钩子自动吸附
+  if (d.place) d.place(el, cw(), ch(), x, y);
   activePage().elements.push(el);
   setSel("el", [el.id]);
   render();
@@ -1318,7 +1280,7 @@ function setMode(m) {
 // Import / Export JSON / 导入导出
 // ====================================================================
 function exportJSON() {
-  download(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), "ui_prompted-project.json");
+  download(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), CFG.jsonFilename);
   toast("Exported JSON");
 }
 
@@ -1387,7 +1349,7 @@ function buildMarkdown() {
   let md = "";
   md += "# UI Design\n\n";
 
-  const target = project.target || "Android";
+  const target = project.target || CFG.defaultTarget;
   const home = project.pages.find(p => p.isHome);
   md += `> Target: ${target}\n`;
   md += `> Entry point (first screen shown on app launch): ${home ? "`" + home.name + "`" : "—"}\n\n`;
@@ -1435,7 +1397,7 @@ function parseMarkdown(md) {
 
   // target: from readable "> Target: X" line (or legacy [TARGET:] marker)
   const targetM = md.match(/^>\s*Target:\s*(.+?)\s*$/m) || md.match(/\[TARGET:\s*([^\]]*)\]/);
-  proj.target = targetM ? targetM[1].trim() : "Android";
+  proj.target = targetM ? targetM[1].trim() : CFG.defaultTarget;
   // entry/home: prefer screen home="true"; fall back to the readable line or legacy [HOME:]
   const homeM = md.match(/Entry point[^\n]*:\s*`?([^`\n]+?)`?\s*$/m) || md.match(/\[HOME:\s*([^\]]*)\]/);
   const homeName = homeM ? homeM[1].trim() : null;
@@ -1447,7 +1409,7 @@ function parseMarkdown(md) {
     const nl = part.indexOf("\n");
     let header = (nl >= 0 ? part.slice(0, nl) : part).trim().replace(/\((entry point|Home)\)\s*$/i, "").trim();
     const bodyTxt = nl >= 0 ? part.slice(nl + 1) : "";
-    const page = { id: id("p"), name: header || ("Page " + n), isHome: false, elements: [], memos: [], canvasW: 360, canvasH: 720 };
+    const page = { id: id("p"), name: header || ("Page " + n), isHome: false, elements: [], memos: [], canvasW: CFG.defaultCanvas.w, canvasH: CFG.defaultCanvas.h };
 
     const xmlM = bodyTxt.match(/```xml\s*([\s\S]*?)```/);
     if (xmlM) parseScreen(xmlM[1], page, id, linkFix, refFix);
@@ -1481,8 +1443,8 @@ function parseScreen(xml, page, id, linkFix, refFix) {
   const doc = new DOMParser().parseFromString("<root>" + xml + "</root>", "application/xml");
   if (doc.querySelector("parsererror")) throw new Error("XML parse error in " + page.name);
   const screen = doc.querySelector("screen") || doc.documentElement;
-  if (screen.getAttribute && screen.getAttribute("width")) page.canvasW = parseInt(screen.getAttribute("width")) || 360;
-  if (screen.getAttribute && screen.getAttribute("height")) page.canvasH = parseInt(screen.getAttribute("height")) || 720;
+  if (screen.getAttribute && screen.getAttribute("width")) page.canvasW = parseInt(screen.getAttribute("width")) || CFG.defaultCanvas.w;
+  if (screen.getAttribute && screen.getAttribute("height")) page.canvasH = parseInt(screen.getAttribute("height")) || CFG.defaultCanvas.h;
   if (screen.getAttribute && screen.getAttribute("home") === "true") page.isHome = true;
 
   // parse one element node (not <group>) / 解析单个元素节点
@@ -1559,7 +1521,7 @@ $("#cRegen").onclick = () => {
   renderCode(); toast("Regenerated");
 };
 $("#cCopy").onclick = () => copyText(codeArea.value);
-$("#cDownload").onclick = () => { download(new Blob([codeArea.value], { type: "text/markdown" }), "android-ui.md"); toast("Downloaded"); };
+$("#cDownload").onclick = () => { download(new Blob([codeArea.value], { type: "text/markdown" }), CFG.mdFilename); toast("Downloaded"); };
 
 // lightweight syntax highlighter (XML + Markdown) / 轻量语法高亮
 function highlightCode(src) {

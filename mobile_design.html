@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <!--
-  ui_prompted — Android UI 草图工具 / Android UI sketch tool
-  单页 HTML，无需构建。在浏览器中打开即可使用。
-  Single-page HTML, no build step. Just open in a browser.
+  ui_prompted — 手机端 UI 草图工具 / Mobile UI sketch tool (Android / iOS)
+  无需构建，浏览器直接打开。配置在本页内联（APP_CONFIG），引擎在 sketcher.js。
+  No build step, open directly in a browser. Config is inline (APP_CONFIG); engine in sketcher.js.
 -->
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ui_prompted · Android UI Sketch</title>
+<title>ui_prompted · Mobile UI Sketch</title>
 <link rel="stylesheet" href="sketcher.css">
 </head>
 <body class="mode-visual">
@@ -33,27 +33,8 @@
     <button class="tool" data-act="view" data-mode="preview">▶ Preview</button>
   </div>
 
-  <div class="group">
-    <span class="group-label">Basic</span>
-    <div class="tool draw" draggable="true" data-type="text">T Text</div>
-    <div class="tool draw" draggable="true" data-type="rect">▭ Frame</div>
-    <div class="tool draw" draggable="true" data-type="image">🖼 Image</div>
-    <div class="tool draw" draggable="true" data-type="icon">★ Icon</div>
-    <div class="tool draw" draggable="true" data-type="button">▢ Button</div>
-    <div class="tool draw" draggable="true" data-type="textfield">▭ Textfield</div>
-    <div class="tool draw" draggable="true" data-type="toggle">◑ Toggle</div>
-    <div class="tool draw" draggable="true" data-type="divider">— Divider</div>
-  </div>
-
-  <div class="group">
-    <span class="group-label">Components</span>
-    <div class="tool draw" draggable="true" data-type="card">▢ Card</div>
-    <div class="tool draw" draggable="true" data-type="list">☰ List</div>
-    <div class="tool draw" draggable="true" data-type="topbar">▔ Top Bar</div>
-    <div class="tool draw" draggable="true" data-type="bottombar">▁ Bottom Bar</div>
-    <div class="tool draw" draggable="true" data-type="fab">＋ FAB</div>
-    <div class="tool draw" draggable="true" data-type="include" title="Embed another page as an element">📦 Include</div>
-  </div>
+  <!-- element palette, generated from APP_CONFIG.palette / 元素面板，由 APP_CONFIG.palette 生成 -->
+  <div id="paletteGroups" style="display:contents"></div>
 
   <div class="group">
     <span class="group-label">Style</span>
@@ -138,6 +119,165 @@
 <div class="toast" id="toast"></div>
 <input type="file" id="fileInput" accept=".json,application/json" style="display:none">
 
+<script>
+"use strict";
+// ====================================================================
+// Mobile config / 手机端配置 — read by sketcher.js (load order matters)
+// ====================================================================
+window.APP_CONFIG = {
+  storeKey: "ui_prompted-project-v1",
+  storeKeyLegacy: "easy-xml-project-v1",   // pre-rename key; read once for migration
+  prefsKey: "ui_prompted-prefs-v1",
+  prefsKeyLegacy: "easy-xml-prefs-v1",
+  targets: ["Android", "iOS", "Web", "Desktop", "Mobile (generic)"],
+  defaultTarget: "Android",
+  defaultCanvas: { w: 360, h: 720 },
+  canvasPresets: [
+    { label: "Phone 360×720",    w: 360,  h: 720 },
+    { label: "Phone 360×800",    w: 360,  h: 800 },
+    { label: "Phone L 412×915",  w: 412,  h: 915 },
+    { label: "Compact 320×568",  w: 320,  h: 568 },
+    { label: "Tablet 800×1280",  w: 800,  h: 1280 },
+    { label: "Web 1280×800",     w: 1280, h: 800 },
+    { label: "Desktop 1440×900", w: 1440, h: 900 },
+  ],
+  mdFilename: "android-ui.md",
+  jsonFilename: "ui_prompted-project.json",
+  palette: [
+    { label: "Basic",      types: ["text", "rect", "image", "icon", "button", "textfield", "toggle", "divider"] },
+    { label: "Components", types: ["card", "list", "topbar", "bottombar", "fab", "include"] },
+  ],
+  // Each type: defaults (w/h/text/color), optional textPos / posPicker / place(),
+  // and draw(g, el) using engine helpers rect/label/line/circle/textXY.
+  // 每个类型：默认值，及可选 textPos / posPicker / place()，draw 使用引擎辅助函数。
+  types: {
+    text: {
+      label: "T Text", w: 160, h: 28, text: "Text", color: "#1d2330", textPos: "ml",
+      draw(g, el) {
+        // plain text label, no box / 纯文本，无边框
+        const s = Math.min(Math.max(el.h * 0.7, 12), 28), p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Text", el.color || "#1d2330", s, p.anchor);
+      },
+    },
+    rect: {
+      label: "▭ Frame", w: 200, h: 130, text: "", textPos: "tl", posPicker: true,
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 8);
+        if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor); }
+      },
+    },
+    image: {
+      label: "🖼 Image", w: 200, h: 140, text: "", color: "#eef0f3",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color || "#eef0f3", op, "#c4c9d2", 8);
+        line(g, 0, 0, el.w, el.h, "#c4c9d2"); line(g, el.w, 0, 0, el.h, "#c4c9d2");
+        label(g, el.w / 2, el.h / 2 + 6, el.text || "🖼", "#8a8f99", 16, "middle");
+      },
+    },
+    icon: {
+      label: "★ Icon", w: 44, h: 44, text: "★", color: "#1d2330",
+      draw(g, el) {
+        const s = Math.min(el.w, el.h) * 0.82;
+        label(g, el.w / 2, el.h / 2 + s * 0.35, el.text || "★", el.color || "#1d2330", s, "middle");
+      },
+    },
+    button: {
+      label: "▢ Button", w: 140, h: 46, text: "Button", textPos: "mc", posPicker: true,
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 22);
+        const s = 15, p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Button", "#1d2330", s, p.anchor, 600);
+      },
+    },
+    textfield: {
+      label: "▭ Textfield", w: 240, h: 46, text: "Input...", textPos: "ml", posPicker: true,
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 6);
+        const s = 14, p = textXY(el, s);
+        label(g, p.x, p.y, el.text || "Input...", el.text ? "#444" : "#8a8f99", s, p.anchor);
+      },
+    },
+    toggle: {
+      label: "◑ Toggle", w: 52, h: 30, text: "", color: "#5b9dff",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        const rr = el.h / 2;
+        rect(g, 0, 0, el.w, el.h, el.color || "#5b9dff", op, "none", rr);   // "on" track
+        circle(g, el.w - rr, rr, rr - 3, "#fff", "none");                   // knob right
+      },
+    },
+    divider: {
+      label: "— Divider", w: 240, h: 2, text: "", color: "#d0d0d0",
+      place(el, W, H, x, y) { el.w = Math.min(W, 240); el.x = clamp(x - el.w / 2, 0, W - el.w); },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, Math.max(1, el.h), el.color || "#d0d0d0", op, "none", 0);
+      },
+    },
+    card: {
+      label: "▢ Card", w: 240, h: 160, text: "", textPos: "tl",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 2, 3, el.w, el.h, "#00000018", op, "none", 12);   // soft shadow / 阴影
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 12);
+        if (el.text) { const s = 14, p = textXY(el, s); label(g, p.x, p.y, el.text, "#1d2330", s, p.anchor, 600); }
+      },
+    },
+    list: {
+      label: "☰ List", w: 260, h: 220, text: "Item",
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color, op, "#3a3d47", 8);
+        const rows = Math.max(2, Math.floor(el.h / 44));
+        for (let i = 1; i < rows; i++) { const ly = i * (el.h / rows); line(g, 0, ly, el.w, ly, "#e3e3e3"); }
+        for (let i = 0; i < rows; i++) {
+          const ly = i * (el.h / rows) + (el.h / rows) / 2 + 4;
+          label(g, 14, ly, (el.text || "Item") + " " + (i + 1), "#4a4f59", 13, "start");
+        }
+      },
+    },
+    topbar: {
+      label: "▔ Top Bar", w: 360, h: 56, text: "Title",
+      place(el, W, H) { el.w = W; el.x = 0; el.y = 0; },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#5b9dff" : el.color, op, "none", 0);
+        label(g, 16, el.h / 2 + 6, "≡", "#fff", 20, "start");
+        label(g, 46, el.h / 2 + 5, el.text || "Title", "#fff", 16, "start", 600);
+        label(g, el.w - 16, el.h / 2 + 6, "⋮", "#fff", 20, "end");
+      },
+    },
+    bottombar: {
+      label: "▁ Bottom Bar", w: 360, h: 60, text: "Home,Search,Profile",
+      place(el, W, H) { el.w = W; el.x = 0; el.y = H - el.h; },
+      draw(g, el) {
+        const op = el.opacity != null ? el.opacity : 1;
+        rect(g, 0, 0, el.w, el.h, el.color === "#ffffff" || !el.color ? "#ffffff" : el.color, op, "#e2e5ea", 0);
+        const items = (el.text || "Tab").split(",").map(s => s.trim()).filter(Boolean);
+        const n = Math.max(1, items.length);
+        items.forEach((it, i) => {
+          const cx = (i + 0.5) * (el.w / n);
+          circle(g, cx, el.h * 0.32, 8, i === 0 ? "#5b9dff" : "#b9bfca", "none");
+          label(g, cx, el.h * 0.78, it, i === 0 ? "#5b9dff" : "#8a8f99", 11, "middle");
+        });
+      },
+    },
+    fab: {
+      label: "＋ FAB", w: 56, h: 56, text: "＋", color: "#5b9dff",
+      place(el, W, H) { el.x = clamp(W - el.w - 16, 0, W - el.w); el.y = clamp(H - el.h - 16, 0, H - el.h); },
+      draw(g, el) {
+        const rr = Math.min(el.w, el.h) / 2;
+        circle(g, el.w / 2, el.h / 2, rr, el.color || "#5b9dff", "none");
+        label(g, el.w / 2, el.h / 2 + 8, el.text || "＋", "#fff", rr, "middle", 600);
+      },
+    },
+  },
+};
+</script>
 <script src="sketcher.js"></script>
 </body>
 </html>
